@@ -1,0 +1,99 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  min-height: 100%;
+  background: #0b0f14;
+}
+
+body {
+  @apply bg-bg font-sans text-textPrimary antialiased;
+  background-image:
+    radial-gradient(circle at top, rgba(79, 124, 255, 0.08) 0%, transparent 28%),
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(180deg, #0d1218 0%, #0b0f14 38%, #090d12 100%);
+  background-size:
+    auto,
+    48px 48px,
+    48px 48px,
+    auto;
+  min-height: 100vh;
+}
+
+button,
+a,
+[role="button"],
+summary {
+  -webkit-user-select: none;
+  user-select: none;
+  caret-color: transparent;
+}
+
+* {
+  @apply border-border;
+}
+
+.glass-panel {
+  background: rgba(17, 22, 29, 0.96);
+}
+
+.panel-glow {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 14px 34px rgba(0, 0, 0, 0.28);
+}
+
+.tabular {
+  @apply font-mono;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+@layer components {
+  .control-surface {
+    @apply h-10 w-full rounded-lg border border-border bg-panelSoft px-3 text-sm text-textPrimary outline-none transition placeholder:text-slate-500 focus:border-accent/70 focus:ring-2 focus:ring-accent/15;
+  }
+
+  .button-surface {
+    @apply inline-flex items-center gap-2 rounded-lg border border-border bg-panelSoft px-3 py-2 text-sm font-medium text-textPrimary transition hover:border-slate-500/70 hover:bg-[#161d26] hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .button-primary {
+    @apply inline-flex items-center gap-2 rounded-lg border border-accent/35 bg-accent/10 px-3 py-2 text-sm font-medium text-textPrimary transition hover:border-accent/55 hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .terminal-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500;
+  }
+}
+
+::selection {
+  @apply bg-accent/30 text-white;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(11, 15, 20, 0.78);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.88);
+  border: 2px solid rgba(11, 15, 20, 0.9);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 124, 255, 0.5);
+}
