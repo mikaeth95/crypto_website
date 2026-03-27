@@ -3,6 +3,8 @@ import { formatPercent, signedClass } from "../../lib/formatters";
 import { Badge } from "../ui/badge";
 import { ChartPanel } from "../ui/chart-panel";
 
+const fiatLikeAssets = new Set(["EUR", "USD", "USDC", "USDT", "USDP", "DAI", "TUSD", "USDE"]);
+
 const MoverList = ({ title, rows }: { title: string; rows: PortfolioAssetRow[] }) => (
   <ChartPanel title={title}>
     <div className="space-y-2">
@@ -13,7 +15,7 @@ const MoverList = ({ title, rows }: { title: string; rows: PortfolioAssetRow[] }
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Badge tone={idx < 2 ? "blue" : "default"}>#{idx + 1}</Badge>
+              <Badge tone="blue">#{idx + 1}</Badge>
               <span className="font-medium text-slate-100">{r.asset}</span>
             </div>
             <span className={`tabular ${signedClass(r.unrealizedProfitPct)}`}>
@@ -35,9 +37,11 @@ const MoverList = ({ title, rows }: { title: string; rows: PortfolioAssetRow[] }
 );
 
 export const TopMovers = ({ assets }: { assets: PortfolioAssetRow[] }) => {
-  const sorted = [...assets].sort(
-    (a, b) => (b.unrealizedProfitPct ?? -Infinity) - (a.unrealizedProfitPct ?? -Infinity),
-  );
+  const sorted = assets
+    .filter((asset) => !fiatLikeAssets.has(asset.asset.toUpperCase()))
+    .sort(
+      (a, b) => (b.unrealizedProfitPct ?? -Infinity) - (a.unrealizedProfitPct ?? -Infinity),
+    );
   const winners = sorted.slice(0, 5);
   const losers = sorted.slice(-5).reverse();
   return (

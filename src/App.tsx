@@ -6,7 +6,6 @@ import { Card } from "./components/ui/card";
 import { PageHeader } from "./components/ui/page-header";
 import { UserDataProvider } from "./context/UserDataContext";
 import { useAppData } from "./hooks/useAppData";
-import { dashboardDerived } from "./lib/calculations";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LiveChartsPage } from "./pages/LiveChartsPage";
@@ -17,7 +16,6 @@ import { TransactionsPage } from "./pages/TransactionsPage";
 
 const ProtectedDashboardRoutes = () => {
   const { data, loading, error } = useAppData();
-  const derived = dashboardDerived(data.assets, data.transactions);
 
   return (
     <DashboardLayout data={data}>
@@ -41,7 +39,7 @@ const ProtectedDashboardRoutes = () => {
       ) : null}
 
       <Routes>
-        <Route path="/dashboard" element={<DashboardPage data={data} derived={derived} />} />
+        <Route path="/dashboard" element={<DashboardPage data={data} />} />
         <Route path="/portfolio" element={<PortfolioPage data={data} />} />
         <Route path="/transactions" element={<TransactionsPage data={data} />} />
         <Route path="/performance" element={<PerformancePage data={data} />} />

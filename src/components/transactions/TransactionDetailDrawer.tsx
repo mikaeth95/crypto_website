@@ -83,7 +83,13 @@ export const TransactionDetailDrawer = ({
               </p>
             </Card>
             <Card className="space-y-1 border-border/80 bg-panelSoft/70 text-sm">
-              <p className="text-slate-400">Price</p>
+              <p className="text-slate-400">Net Quantity</p>
+              <p className="tabular text-lg font-semibold text-slate-100">
+                {formatPlainTransactionNumber(transaction.nettomenge, 6)}
+              </p>
+            </Card>
+            <Card className="space-y-1 border-border/80 bg-panelSoft/70 text-sm">
+              <p className="text-slate-400">Buy Price</p>
               <p className="tabular text-lg font-semibold text-slate-100">
                 {formatInlineTransactionValue(transaction.ausfuehrungspreis, { maxFractionDigits: 6 })}
               </p>
@@ -119,7 +125,7 @@ export const TransactionDetailDrawer = ({
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <DetailField label="Quantity" value={transaction.menge} />
-              <DetailField label="Price" value={transaction.ausfuehrungspreis} />
+              <DetailField label="Buy Price" value={transaction.ausfuehrungspreis} />
               <DetailField label="Gross Value" value={transaction.bruttoWert} />
               <DetailField label="Net Quantity" value={transaction.nettomenge} />
               <DetailField label="Net Value" value={transaction.nettowert} />

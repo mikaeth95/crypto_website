@@ -176,6 +176,38 @@ export const usePerformanceMarketData = (
   });
 
   useEffect(() => {
+    const activeSymbols = new Set(symbols);
+
+    setLiveSummaries((currentSummaries) =>
+      Object.keys(currentSummaries).reduce<Record<string, LiveMarketSummary>>((nextSummaries, symbol) => {
+        if (activeSymbols.has(symbol)) {
+          nextSummaries[symbol] = currentSummaries[symbol];
+        }
+
+        return nextSummaries;
+      }, {}),
+    );
+    setAthSnapshots((currentAthSnapshots) =>
+      Object.keys(currentAthSnapshots).reduce<Record<string, LiveInstrumentAth>>((nextAthSnapshots, symbol) => {
+        if (activeSymbols.has(symbol)) {
+          nextAthSnapshots[symbol] = currentAthSnapshots[symbol];
+        }
+
+        return nextAthSnapshots;
+      }, {}),
+    );
+    setRangeSnapshots((currentRangeSnapshots) =>
+      Object.keys(currentRangeSnapshots).reduce<Record<string, PerformanceRangeSnapshot>>((nextRangeSnapshots, symbol) => {
+        if (activeSymbols.has(symbol)) {
+          nextRangeSnapshots[symbol] = currentRangeSnapshots[symbol];
+        }
+
+        return nextRangeSnapshots;
+      }, {}),
+    );
+  }, [symbols]);
+
+  useEffect(() => {
     const unsubscribers = symbols.map((symbol) =>
       subscribeToMarketSummary(symbol, (summary) => {
         setLiveSummaries((currentSummaries) => ({

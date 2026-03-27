@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildCandlestickChannel,
   buildTickerChannel,
@@ -50,6 +50,8 @@ export const useCryptoWebSocket = ({
   subscribeCandlesticks = true,
   subscribeTickers = true,
 }: UseCryptoWebSocketOptions): UseCryptoWebSocketResult => {
+  const symbolKey = symbols.join("|");
+  const subscribedSymbols = useMemo(() => Array.from(new Set(symbols)).sort(), [symbolKey]);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionLabel, setConnectionLabel] = useState<ConnectionLabel>("Connecting");
   const [reconnectVersion, setReconnectVersion] = useState(0);
@@ -188,6 +190,11 @@ export const useCryptoWebSocket = ({
       return;
     }
 
+    if (subscribedSymbols.length === 0) {
+      setConnectionState(false, "Disconnected");
+      return;
+    }
+
     const existingSocket = socketRef.current;
 
     if (
@@ -217,7 +224,7 @@ export const useCryptoWebSocket = ({
       }
 
       try {
-        const channels = symbols.flatMap((symbol) => [
+        const channels = subscribedSymbols.flatMap((symbol) => [
           ...(subscribeCandlesticks ? [buildCandlestickChannel(timeframe, symbol)] : []),
           ...(subscribeTickers ? [buildTickerChannel(symbol)] : []),
         ]);
@@ -369,7 +376,7 @@ export const useCryptoWebSocket = ({
     setConnectionState,
     subscribeCandlesticks,
     subscribeTickers,
-    symbols,
+    subscribedSymbols,
     timeframe,
   ]);
 

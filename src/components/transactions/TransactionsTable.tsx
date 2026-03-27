@@ -91,9 +91,16 @@ export const TransactionsTable = ({ rows }: { rows: TransactionRow[] }) => {
         ),
       },
       {
+        accessorKey: "nettomenge",
+        header: "Net Quantity",
+        cell: (info) => (
+          <span className="tabular text-slate-100">{formatPlainTransactionNumber(info.getValue<string>(), 6)}</span>
+        ),
+      },
+      {
         id: "price",
         accessorFn: (row) => row.ausfuehrungspreis ?? "",
-        header: "Price",
+        header: "Buy Price",
         cell: (info) => (
           <InlineTransactionValueCell value={info.row.original.ausfuehrungspreis} maxFractionDigits={6} />
         ),

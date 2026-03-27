@@ -8,31 +8,20 @@ import { PageHeader } from "../components/ui/page-header";
 import { SectionHeader } from "../components/ui/section-header";
 import { Badge } from "../components/ui/badge";
 import { usePortfolioLiveData } from "../hooks/usePortfolioLiveData";
-import { deriveDashboardSummary } from "../lib/calculations";
+import { dashboardDerived, deriveDashboardSummary } from "../lib/calculations";
 import type { WorkbookData } from "../types/portfolio";
 
-export const DashboardPage = ({
-  data,
-  derived,
-}: {
-  data: WorkbookData;
-  derived: {
-    assetsHeld: number;
-    txCount: number;
-    profitableAssets: number;
-    losingAssets: number;
-    largestPosition: string | null;
-  } | null;
-}) => {
+export const DashboardPage = ({ data }: { data: WorkbookData }) => {
   const { rows } = usePortfolioLiveData(data.assets);
   const summary = useMemo(() => deriveDashboardSummary(rows), [rows]);
+  const composition = useMemo(() => dashboardDerived(rows, data.transactions), [rows, data.transactions]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Overview Dashboard"
         description="Portfolio health, allocation, movers, and latest trading activity."
-        action={<Badge tone="blue">{derived?.assetsHeld ?? 0} Active Assets</Badge>}
+        action={<Badge tone="blue">{composition.assetsHeld} Active Assets</Badge>}
       />
       <SummaryCards summary={summary} />
       <div className="grid gap-4 xl:grid-cols-3">
@@ -50,23 +39,23 @@ export const DashboardPage = ({
           <div className="space-y-2 px-5 pb-5">
             <p className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5">
               <span className="text-slate-400">Active assets</span>
-              <span className="tabular font-medium text-slate-100">{derived?.assetsHeld ?? 0}</span>
+              <span className="tabular font-medium text-slate-100">{composition.assetsHeld}</span>
             </p>
             <p className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5">
               <span className="text-slate-400">Total transactions</span>
-              <span className="tabular font-medium text-slate-100">{derived?.txCount ?? 0}</span>
+              <span className="tabular font-medium text-slate-100">{composition.txCount}</span>
             </p>
             <p className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5">
               <span className="text-slate-400">Profitable assets</span>
-              <span className="tabular font-medium text-emerald-300">{derived?.profitableAssets ?? 0}</span>
+              <span className="tabular font-medium text-emerald-300">{composition.profitableAssets}</span>
             </p>
             <p className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5">
               <span className="text-slate-400">Losing assets</span>
-              <span className="tabular font-medium text-rose-300">{derived?.losingAssets ?? 0}</span>
+              <span className="tabular font-medium text-rose-300">{composition.losingAssets}</span>
             </p>
             <p className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5">
               <span className="text-slate-400">Largest position</span>
-              <span className="tabular font-medium text-slate-100">{derived?.largestPosition ?? "n/a"}</span>
+              <span className="tabular font-medium text-slate-100">{composition.largestPosition ?? "n/a"}</span>
             </p>
           </div>
         </Card>

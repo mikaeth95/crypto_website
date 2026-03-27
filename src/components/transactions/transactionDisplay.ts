@@ -102,28 +102,11 @@ export const formatAmountWithUnit = (
   return unit ? `${formattedAmount} ${unit}` : formattedAmount;
 };
 
-export const deriveFeeQuoteValue = (transaction: TransactionRow) => {
-  const feeAmount = parseLocalizedNumber(transaction.gebuehr);
-  const feeCurrency = transaction.waehrungGebuehr?.trim().toUpperCase();
-  const quote = transaction.quote?.trim().toUpperCase();
-  const asset = transaction.asset.trim().toUpperCase();
-
-  if (feeAmount === null || feeAmount <= 0 || !feeCurrency) {
-    return null;
-  }
-
-  if (quote && feeCurrency === quote) {
-    return feeAmount;
-  }
-
-  if (feeCurrency !== asset) {
-    return null;
-  }
-
+const resolveExecutionPrice = (transaction: TransactionRow) => {
   const executionPrice = parseLocalizedNumber(transaction.ausfuehrungspreis);
 
   if (executionPrice !== null && executionPrice > 0) {
-    return feeAmount * executionPrice;
+    return executionPrice;
   }
 
   const grossValue = parseLocalizedNumber(transaction.bruttoWert);
@@ -133,22 +116,66 @@ export const deriveFeeQuoteValue = (transaction: TransactionRow) => {
     return null;
   }
 
-  return feeAmount * (grossValue / quantity);
+  return grossValue / quantity;
+};
+
+export const deriveTransactionFeeAmounts = (transaction: TransactionRow) => {
+  const feeAmount = parseLocalizedNumber(transaction.gebuehr);
+  const feeCurrency = transaction.waehrungGebuehr?.trim().toUpperCase();
+  const quote = transaction.quote?.trim().toUpperCase() ?? null;
+  const asset = transaction.asset.trim().toUpperCase();
+
+  if (feeAmount === null || feeAmount <= 0 || !feeCurrency) {
+    return {
+      assetFee: null,
+      quoteFee: null,
+      fallbackFeeDisplay: null,
+    };
+  }
+
+  const executionPrice = resolveExecutionPrice(transaction);
+
+  if (feeCurrency === asset) {
+    return {
+      assetFee: feeAmount,
+      quoteFee: executionPrice !== null ? feeAmount * executionPrice : null,
+      fallbackFeeDisplay: null,
+    };
+  }
+
+  if (quote && feeCurrency === quote) {
+    return {
+      assetFee: executionPrice !== null ? feeAmount / executionPrice : null,
+      quoteFee: feeAmount,
+      fallbackFeeDisplay: null,
+    };
+  }
+
+  return {
+    assetFee: null,
+    quoteFee: null,
+    fallbackFeeDisplay: formatAmountWithUnit(feeAmount, transaction.waehrungGebuehr, 6),
+  };
 };
 
 export const formatTransactionFeeDisplay = (transaction: TransactionRow) => {
-  const feeAmount = parseLocalizedNumber(transaction.gebuehr);
-  const feeSideDisplay =
-    feeAmount !== null
-      ? formatAmountWithUnit(feeAmount, transaction.waehrungGebuehr, 6)
-      : transaction.gebuehr?.trim()
-        ? transaction.waehrungGebuehr
-          ? `${transaction.gebuehr.trim()} ${transaction.waehrungGebuehr}`
-          : transaction.gebuehr.trim()
-        : null;
-  const feeQuoteValue = deriveFeeQuoteValue(transaction);
-  const quoteSideDisplay = formatAmountWithUnit(feeQuoteValue, transaction.quote, 4);
-  const parts = [feeSideDisplay, quoteSideDisplay].filter((part): part is string => Boolean(part));
+  const rawFeeValue = transaction.gebuehr?.trim();
 
-  return parts.length > 0 ? parts.join(" / ") : EMPTY_VALUE;
+  if (!rawFeeValue) {
+    return EMPTY_VALUE;
+  }
+
+  const { assetFee, quoteFee, fallbackFeeDisplay } = deriveTransactionFeeAmounts(transaction);
+  const assetDisplay = formatAmountWithUnit(assetFee, transaction.asset, 6);
+  const quoteDisplay = formatAmountWithUnit(quoteFee, transaction.quote, 4);
+
+  if (assetDisplay || quoteDisplay) {
+    return `${assetDisplay ?? EMPTY_VALUE} / ${quoteDisplay ?? EMPTY_VALUE}`;
+  }
+
+  if (fallbackFeeDisplay) {
+    return fallbackFeeDisplay;
+  }
+
+  return transaction.waehrungGebuehr ? `${rawFeeValue} ${transaction.waehrungGebuehr}` : rawFeeValue;
 };

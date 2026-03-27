@@ -200,9 +200,9 @@ export const LiveChartCard = ({
       }
 
       setErrorMessage(null);
-      setCandles((currentCandles) => mergeCandleSeries(currentCandles, incomingCandle));
+      setCandles((currentCandles) => mergeCandleSeries(currentCandles, incomingCandle, fetchCount));
     });
-  }, [symbol, subscribeToSymbol]);
+  }, [fetchCount, symbol, subscribeToSymbol]);
 
   useEffect(() => {
     return subscribeToMarketSummary(symbol, (incomingSummary) => {
@@ -260,11 +260,18 @@ export const LiveChartCard = ({
         let hasCoveredDesiredVisibleWindow =
           visibleDays === "all" || earliestHistoryTime <= desiredVisibleStartTime;
 
+        // The initial batch is usually already larger than the default viewport.
+        // Avoid walking backwards through the full exchange history unless the
+        // visible window is still under-filled after the first fetch.
+        if (hasCoveredDesiredVisibleWindow) {
+          return;
+        }
+
         void (async () => {
           let earliestLoadedTime = earliestHistoryTime;
           let nextWindowEndMs = earliestLoadedTime * 1000;
 
-          while (!cancelled && nextWindowEndMs > MARKET_HISTORY_START_MS) {
+          while (!cancelled && !hasCoveredDesiredVisibleWindow && nextWindowEndMs > MARKET_HISTORY_START_MS) {
             const nextWindowStartMs = Math.max(
               MARKET_HISTORY_START_MS,
               nextWindowEndMs - fetchCount * candleSeconds * 1000,

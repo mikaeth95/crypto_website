@@ -48,6 +48,20 @@ export const usePortfolioLiveData = (assets: PortfolioAssetRow[]) => {
   });
 
   useEffect(() => {
+    const activeSymbols = new Set(symbols);
+
+    setLiveSummaries((currentSummaries) =>
+      Object.keys(currentSummaries).reduce<Record<string, LiveMarketSummary>>((nextSummaries, symbol) => {
+        if (activeSymbols.has(symbol)) {
+          nextSummaries[symbol] = currentSummaries[symbol];
+        }
+
+        return nextSummaries;
+      }, {}),
+    );
+  }, [symbols]);
+
+  useEffect(() => {
     const unsubscribers = symbols.map((symbol) =>
       subscribeToMarketSummary(symbol, (summary) => {
         setLiveSummaries((currentSummaries) => ({
