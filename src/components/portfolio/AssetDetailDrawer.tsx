@@ -2,6 +2,7 @@ import type { CoinPerformanceRow, PortfolioAssetRow, TransactionRow } from "../.
 import { AnimatePresence, motion } from "framer-motion";
 import { ExternalLink, X } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercent, signedClass } from "../../lib/formatters";
+import { parseLocalizedNumber } from "../../lib/parsers";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
 
@@ -21,6 +22,37 @@ const formatQuoteValue = (value: number | null | undefined, quote: string) => {
 
   return `${formatNumber(value, 6)} ${quote}`;
 };
+
+const EMPTY_VALUE = "n/a";
+
+const calculateTransactionProfit = (tx: TransactionRow, currentPrice: number | null | undefined) => {
+  const executionPrice = parseLocalizedNumber(tx.ausfuehrungspreis);
+  const netQuantity = parseLocalizedNumber(tx.nettomenge);
+
+  if (
+    currentPrice === null ||
+    currentPrice === undefined ||
+    executionPrice === null ||
+    netQuantity === null
+  ) {
+    return null;
+  }
+
+  return (currentPrice - executionPrice) * Math.abs(netQuantity);
+};
+
+const formatProfitValue = (value: number | null, quote: string | null | undefined) => {
+  if (value === null || !quote) {
+    return EMPTY_VALUE;
+  }
+
+  return `${value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} ${quote}`;
+};
+
+const formatTransactionId = (value: string) => value.replace(/^crypto_com_exchange:/, "");
 
 export const AssetDetailDrawer = ({
   asset,
@@ -95,16 +127,39 @@ export const AssetDetailDrawer = ({
           <Card className="mt-4 space-y-3 border-border/80 bg-panelSoft/60">
             <h3 className="text-sm font-semibold text-slate-100">Related Transactions</h3>
             {transactions.length ? (
-              transactions.slice(0, 12).map((tx) => (
-                <div
-                  key={tx.transaktionId}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-panel px-3 py-2 text-xs"
-                >
-                  <span className="font-medium text-slate-200">{tx.typ}</span>
-                  <span className="tabular text-slate-300">{tx.nettowert}</span>
-                  <span className="truncate text-slate-500">{tx.transaktionId}</span>
-                </div>
-              ))
+              transactions.slice(0, 12).map((tx) => {
+                const transactionProfit = calculateTransactionProfit(tx, asset.currentPrice);
+                const quote = tx.quote ?? asset.quote;
+
+                return (
+                  <div
+                    key={tx.transaktionId}
+                    className="space-y-2 rounded-lg border border-border/70 bg-panel px-3 py-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-slate-200">{tx.typ}</span>
+                      <span className="tabular text-slate-400">{tx.datum ?? EMPTY_VALUE}</span>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <span className="text-slate-300">
+                        Price: <span className="tabular text-slate-100">{tx.ausfuehrungspreis ?? EMPTY_VALUE}</span>
+                      </span>
+                      <span className="text-slate-300">
+                        Net: <span className="tabular text-slate-100">{tx.nettowert}</span>
+                      </span>
+                      <span className="text-slate-300">
+                        Profit:{" "}
+                        <span className={`tabular ${signedClass(transactionProfit)}`}>
+                          {formatProfitValue(transactionProfit, quote)}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="truncate text-slate-500" title={tx.transaktionId}>
+                      {formatTransactionId(tx.transaktionId)}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
               <p className="text-sm text-slate-400">No related transactions found.</p>
             )}
