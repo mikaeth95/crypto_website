@@ -1,19 +1,31 @@
-import { ChevronDown, Menu, MoreHorizontal, X } from "lucide-react";
+import {
+  BarChart3,
+  Briefcase,
+  ChevronDown,
+  History,
+  LayoutDashboard,
+  Menu,
+  MoreHorizontal,
+  ReceiptText,
+  Search,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 
 const primaryItems = [
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/portfolio", label: "Portfolio" },
-  { to: "/trade-history", label: "Trade History" },
-  { to: "/transactions", label: "Transactions" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { to: "/trade-history", label: "Trade History", icon: History },
+  { to: "/transactions", label: "Transactions", icon: ReceiptText },
 ];
 
 const secondaryItems = [
-  { to: "/performance", label: "Performance" },
-  { to: "/markets", label: "Markets" },
-  { to: "/live-charts", label: "Charts" },
+  { to: "/performance", label: "Performance", icon: BarChart3 },
+  { to: "/markets", label: "Markets", icon: Search },
+  { to: "/live-charts", label: "Charts", icon: TrendingUp },
 ];
 
 const allItems = [...primaryItems, ...secondaryItems];
@@ -23,14 +35,14 @@ const isPathActive = (pathname: string, target: string) =>
 
 const desktopLinkClassName = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "relative inline-flex h-16 items-center px-0.5 text-sm font-normal text-slate-500 transition-colors hover:text-slate-300",
+    "relative inline-flex h-16 items-center gap-2 px-0.5 text-sm font-normal text-slate-500 transition-colors hover:text-slate-300",
     isActive &&
       "font-semibold text-slate-50 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-t-full after:bg-accent/70",
   );
 
 const menuLinkClassName = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "flex items-center px-3 py-2.5 text-sm font-normal text-slate-400 transition-colors hover:text-slate-200",
+    "flex items-center gap-2.5 px-3 py-2.5 text-sm font-normal text-slate-400 transition-colors hover:text-slate-200",
     isActive && "font-semibold text-slate-50",
   );
 
@@ -77,6 +89,7 @@ export const AppNavigation = () => {
       <nav className="hidden items-center gap-4 md:flex xl:gap-5 2xl:gap-7" aria-label="Primary navigation">
         {primaryItems.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.to === "/dashboard"} className={desktopLinkClassName}>
+            <item.icon size={14} className="shrink-0" />
             {item.label}
           </NavLink>
         ))}
@@ -84,6 +97,7 @@ export const AppNavigation = () => {
         <div className="hidden xl:contents">
           {secondaryItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={desktopLinkClassName}>
+              <item.icon size={14} className="shrink-0" />
               {item.label}
             </NavLink>
           ))}
@@ -110,6 +124,7 @@ export const AppNavigation = () => {
             <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-border/90 bg-panel p-1.5 shadow-[0_18px_44px_rgba(0,0,0,0.48)]">
               {secondaryItems.map((item) => (
                 <NavLink key={item.to} to={item.to} className={menuLinkClassName}>
+                  <item.icon size={15} className="shrink-0" />
                   {item.label}
                 </NavLink>
               ))}
@@ -136,6 +151,7 @@ export const AppNavigation = () => {
         >
           {allItems.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.to === "/dashboard"} className={menuLinkClassName}>
+              <item.icon size={15} className="shrink-0" />
               {item.label}
             </NavLink>
           ))}

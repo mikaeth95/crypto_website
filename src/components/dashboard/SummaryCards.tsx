@@ -39,7 +39,6 @@ export const SummaryCards = ({ summary }: { summary: DashboardSummary }) => {
         trendTone="blue"
         sparkline={[6, 7, 6.8, 7.1, 7.4, 7.3, 7.5, 7.9]}
         icon={<CircleDollarSign size={16} className="text-sky-300" />}
-        variant="primary"
       />
       <KpiCard
         index={1}

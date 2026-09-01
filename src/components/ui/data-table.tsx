@@ -10,12 +10,17 @@ import {
 import { useState, type ReactNode } from "react";
 import { Input } from "./input";
 import { cn } from "../../lib/utils";
+import type { TableExportConfig } from "../../lib/tableExport";
+import { TableExportMenu } from "./table-export-menu";
 
 export const DataTable = <T extends object>({
   columns,
   data,
   searchPlaceholder = "Search...",
   searchHint,
+  toolbarControls,
+  searchInputClassName,
+  exportConfig,
   className,
   tableContainerClassName,
   tableClassName,
@@ -28,6 +33,9 @@ export const DataTable = <T extends object>({
   data: T[];
   searchPlaceholder?: string;
   searchHint?: ReactNode;
+  toolbarControls?: ReactNode;
+  searchInputClassName?: string;
+  exportConfig?: TableExportConfig<T>;
   className?: string;
   tableContainerClassName?: string;
   tableClassName?: string;
@@ -46,17 +54,24 @@ export const DataTable = <T extends object>({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
+  const visibleRows = table.getRowModel().rows.map((row) => row.original);
 
   return (
     <div className={cn("space-y-3", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Input
           value={globalFilter}
           onChange={(event) => setGlobalFilter(event.target.value)}
           placeholder={searchPlaceholder}
-          className="max-w-sm"
+          className={cn("max-w-sm", searchInputClassName)}
         />
-        {searchHint ? <p className="text-xs text-slate-500">{searchHint}</p> : null}
+        {toolbarControls}
+        {exportConfig ? (
+          <div className="ml-auto">
+            <TableExportMenu rows={visibleRows} config={exportConfig} />
+          </div>
+        ) : null}
+        {!exportConfig && searchHint ? <p className="ml-auto text-xs text-slate-500">{searchHint}</p> : null}
       </div>
 
       <div

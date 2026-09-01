@@ -228,7 +228,22 @@ export const PortfolioTable = ({
         columns={columns}
         data={rows}
         searchPlaceholder="Search asset..."
-        searchHint="Select a row for details."
+        exportConfig={{
+          fileName: "portfolio",
+          sheetName: "Portfolio",
+          columns: [
+            { header: "Asset", value: (row) => row.asset },
+            { header: "Quote", value: (row) => row.quote },
+            { header: "Price", value: (row) => row.currentPrice },
+            { header: "Avg Buy", value: (row) => row.avgBuyPrice },
+            { header: "Current Value", value: (row) => row.currentValue },
+            { header: "Balance", value: (row) => row.bestand },
+            { header: "Unrealized PnL", value: (row) => row.unrealizedProfit },
+            { header: "Unrealized PnL %", value: (row) => row.unrealizedProfitPct },
+            { header: "Portfolio %", value: (row) => row.portfolioPct },
+            { header: "Trades", value: (row) => row.trades },
+          ],
+        }}
         className="tabular"
         onRowClick={(row) => setSelected(row)}
       />

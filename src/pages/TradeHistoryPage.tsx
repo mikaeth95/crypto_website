@@ -12,7 +12,9 @@ import type { WorkbookData } from "../types/portfolio";
 type ActiveTab = "closed" | "open";
 type ResultFilter = "all" | "profit" | "loss" | "break-even";
 
-const controlClassName = "control-surface min-w-36";
+const assetControlClassName = "control-surface w-full sm:w-44";
+const timeControlClassName = "control-surface w-full sm:w-40";
+const resultControlClassName = "control-surface w-full sm:w-44";
 
 const formatMoneyTotals = (values: Array<{ quote: string; value: number }>) => {
   const totals = values.reduce<Record<string, number>>((result, item) => {
@@ -124,6 +126,46 @@ export const TradeHistoryPage = ({ data }: { data: WorkbookData }) => {
   const hasRealizedLoss = history.closedTrades.some((trade) => trade.realizedPnl < 0);
   const realizedValueClassName =
     hasRealizedProfit && !hasRealizedLoss ? "text-pos" : hasRealizedLoss && !hasRealizedProfit ? "text-neg" : undefined;
+  const tableFilterControls = (
+    <>
+      <select
+        value={assetFilter}
+        onChange={(event) => setAssetFilter(event.target.value)}
+        className={assetControlClassName}
+        aria-label="Filter by asset"
+      >
+        <option value="all">All Assets</option>
+        {assets.map((asset) => (
+          <option key={asset} value={asset}>{asset}</option>
+        ))}
+      </select>
+      <select
+        value={periodFilter}
+        onChange={(event) => setPeriodFilter(event.target.value)}
+        className={timeControlClassName}
+        aria-label="Filter by time period"
+      >
+        <option value="all">All Time</option>
+        <option value="7d">7 Days</option>
+        <option value="30d">30 Days</option>
+        <option value="year">This Year</option>
+        {years.map((year) => (
+          <option key={year} value={year}>{year}</option>
+        ))}
+      </select>
+      <select
+        value={resultFilter}
+        onChange={(event) => setResultFilter(event.target.value as ResultFilter)}
+        className={resultControlClassName}
+        aria-label="Filter by result"
+      >
+        <option value="all">All Results</option>
+        <option value="profit">Profit</option>
+        <option value="loss">Loss</option>
+        <option value="break-even">Break Even</option>
+      </select>
+    </>
+  );
 
   return (
     <div className="space-y-4">
@@ -144,7 +186,6 @@ export const TradeHistoryPage = ({ data }: { data: WorkbookData }) => {
           trendLabel="FIFO realized"
           trendTone="blue"
           icon={<TrendingUp size={16} className="text-emerald-300" />}
-          variant="primary"
         />
         <KpiCard
           index={1}
@@ -193,44 +234,14 @@ export const TradeHistoryPage = ({ data }: { data: WorkbookData }) => {
             </button>
           </div>
           <p className="text-xs text-slate-500">
-            {activeTab === "closed"
-              ? `${filteredClosedTrades.length} sales after filters`
-              : `${filteredOpenLots.length} remaining FIFO lots`}
+            {activeTab === "closed" ? filteredClosedTrades.length : filteredOpenLots.length} results
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <select value={assetFilter} onChange={(event) => setAssetFilter(event.target.value)} className={controlClassName}>
-            <option value="all">All Assets</option>
-            {assets.map((asset) => (
-              <option key={asset} value={asset}>{asset}</option>
-            ))}
-          </select>
-          <select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)} className={controlClassName}>
-            <option value="all">All Time</option>
-            <option value="7d">7 Days</option>
-            <option value="30d">30 Days</option>
-            <option value="year">This Year</option>
-            {years.map((year) => (
-              <option key={year} value={year}>{year}</option>
-            ))}
-          </select>
-          <select
-            value={resultFilter}
-            onChange={(event) => setResultFilter(event.target.value as ResultFilter)}
-            className={controlClassName}
-          >
-            <option value="all">All Results</option>
-            <option value="profit">Profit</option>
-            <option value="loss">Loss</option>
-            <option value="break-even">Break Even</option>
-          </select>
-        </div>
-
         {activeTab === "closed" ? (
-          <ClosedTradesTable rows={filteredClosedTrades} />
+          <ClosedTradesTable rows={filteredClosedTrades} toolbarControls={tableFilterControls} />
         ) : (
-          <OpenLotsTable rows={filteredOpenLots} />
+          <OpenLotsTable rows={filteredOpenLots} toolbarControls={tableFilterControls} />
         )}
       </Card>
     </div>

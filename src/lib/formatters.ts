@@ -28,6 +28,20 @@ export const formatPercent = (value: number | null | undefined) => {
   })}%`;
 };
 
+export const formatChartPercent = (
+  value: number | null | undefined,
+  { signed = false, maximumFractionDigits = 1 }: { signed?: boolean; maximumFractionDigits?: number } = {},
+) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
+
+  const sign = signed && value > 0 ? "+" : "";
+
+  return `${sign}${value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  })}%`;
+};
+
 export const formatCompact = (value: number | null | undefined) => {
   if (value === null || value === undefined) return "n/a";
   return Intl.NumberFormat("en-US", {

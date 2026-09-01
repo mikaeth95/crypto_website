@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ClosedTrade, OpenLot } from "../../lib/tradeHistory";
 import { formatNumber, formatPercent, signedClass } from "../../lib/formatters";
 import { useCryptoBubbleAssets } from "../../hooks/useCryptoBubbleAssets";
@@ -27,7 +27,7 @@ const formatDate = (value: string) => {
     : parsed.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
 };
 
-export const ClosedTradesTable = ({ rows }: { rows: ClosedTrade[] }) => {
+export const ClosedTradesTable = ({ rows, toolbarControls }: { rows: ClosedTrade[]; toolbarControls?: ReactNode }) => {
   const [selectedTrade, setSelectedTrade] = useState<ClosedTrade | null>(null);
   const bubbleAssetsBySymbol = useCryptoBubbleAssets();
   const columns = useMemo<ColumnDef<ClosedTrade>[]>(
@@ -90,6 +90,23 @@ export const ClosedTradesTable = ({ rows }: { rows: ClosedTrade[] }) => {
         columns={columns}
         data={rows}
         searchPlaceholder="Search closed trades..."
+        searchInputClassName="w-full sm:w-[340px] sm:max-w-[340px]"
+        toolbarControls={toolbarControls}
+        exportConfig={{
+          fileName: "trade-history-closed-trades",
+          sheetName: "Closed Trades",
+          columns: [
+            { header: "Asset", value: (row) => row.asset },
+            { header: "Quote", value: (row) => row.quote },
+            { header: "Sold", value: (row) => row.sellDate },
+            { header: "Amount", value: (row) => row.amount },
+            { header: "FIFO Cost", value: (row) => row.averageCost },
+            { header: "Sell Price", value: (row) => row.sellPrice },
+            { header: "Realized P&L", value: (row) => row.realizedPnl },
+            { header: "Return %", value: (row) => row.returnPct },
+            { header: "FIFO Matches", value: (row) => row.matches.length },
+          ],
+        }}
         className="tabular"
         tableContainerClassName="max-h-[65vh] overflow-y-auto"
         onRowClick={setSelectedTrade}
@@ -100,7 +117,7 @@ export const ClosedTradesTable = ({ rows }: { rows: ClosedTrade[] }) => {
   );
 };
 
-export const OpenLotsTable = ({ rows }: { rows: OpenLot[] }) => {
+export const OpenLotsTable = ({ rows, toolbarControls }: { rows: OpenLot[]; toolbarControls?: ReactNode }) => {
   const bubbleAssetsBySymbol = useCryptoBubbleAssets();
   const columns = useMemo<ColumnDef<OpenLot>[]>(
     () => [
@@ -165,6 +182,24 @@ export const OpenLotsTable = ({ rows }: { rows: OpenLot[] }) => {
       columns={columns}
       data={rows}
       searchPlaceholder="Search open lots..."
+      searchInputClassName="w-full sm:w-[340px] sm:max-w-[340px]"
+      toolbarControls={toolbarControls}
+      exportConfig={{
+        fileName: "trade-history-open-lots",
+        sheetName: "Open Lots",
+        columns: [
+          { header: "Asset", value: (row) => row.asset },
+          { header: "Quote", value: (row) => row.quote },
+          { header: "Bought", value: (row) => row.buyDate },
+          { header: "Original", value: (row) => row.originalQuantity },
+          { header: "Remaining", value: (row) => row.remainingQuantity },
+          { header: "Buy Price", value: (row) => row.buyPrice },
+          { header: "Cost Basis", value: (row) => row.costBasis },
+          { header: "Current Value", value: (row) => row.currentValue },
+          { header: "Unrealized P&L", value: (row) => row.unrealizedPnl },
+          { header: "Return %", value: (row) => row.returnPct },
+        ],
+      }}
       className="tabular"
       tableContainerClassName="max-h-[65vh] overflow-y-auto"
     />

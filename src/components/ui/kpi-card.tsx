@@ -18,7 +18,6 @@ export const KpiCard = ({
   wrapperClassName,
   icon,
   index = 0,
-  variant = "default",
 }: {
   label: string;
   value: string;
@@ -32,7 +31,6 @@ export const KpiCard = ({
   wrapperClassName?: string;
   icon?: ReactNode;
   index?: number;
-  variant?: "default" | "primary";
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 8 }}
@@ -42,9 +40,7 @@ export const KpiCard = ({
   >
     <Card
       className={cn(
-        "group h-full border-border/80 bg-panelSoft/80 p-4 transition duration-200 hover:border-slate-500/70",
-        variant === "primary" &&
-          "border-accent/35 bg-[#121925] shadow-[0_18px_40px_rgba(0,0,0,0.34)] before:bg-accent/25",
+        "h-full cursor-default border-border/80 bg-panelSoft/80 p-4",
         className,
       )}
     >
@@ -67,12 +63,7 @@ export const KpiCard = ({
             ) : null}
           </div>
           {icon ? (
-            <div
-              className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-lg border border-border/70 bg-panel text-slate-200",
-                variant === "primary" && "border-accent/30 bg-accent/10 text-[#c7d4ff]",
-              )}
-            >
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border/70 bg-panel text-slate-200">
               {icon}
             </div>
           ) : null}
