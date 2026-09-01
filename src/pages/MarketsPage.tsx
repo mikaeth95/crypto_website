@@ -183,7 +183,7 @@ const MarketMoverTile = ({
   </article>
 );
 
-export const MarketsPage = () => {
+export const MarketsPage = ({ updatedAt }: { updatedAt?: string | null }) => {
   const navigate = useNavigate();
   const { instruments, tickerSummaries, loading, summariesLoading, error, summariesError } = useMarketInstruments();
   const [quoteFilter, setQuoteFilter] = useState<MarketInstrumentQuoteFilter>("ALL");
@@ -620,6 +620,7 @@ export const MarketsPage = () => {
       <PageHeader
         title="Markets"
         description="Browse Crypto.com Exchange spot markets and scan price action across EUR, USD, and USDT pairs."
+        updatedAt={updatedAt}
         action={
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="blue">{supportedInstruments.length} Markets</Badge>

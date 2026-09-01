@@ -1,5 +1,6 @@
 export interface TransactionRow {
   datum: string | null;
+  occurredAt?: string | null;
   typ: string;
   asset: string;
   quote: string | null;

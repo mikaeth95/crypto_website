@@ -22,6 +22,7 @@ export const DashboardPage = ({ data }: { data: WorkbookData }) => {
         title="Overview Dashboard"
         description="Portfolio health, allocation, movers, and latest trading activity."
         action={<Badge tone="blue">{composition.assetsHeld} Active Assets</Badge>}
+        updatedAt={data.loadedAt}
       />
       <SummaryCards summary={summary} />
       <div className="grid gap-4 xl:grid-cols-3">

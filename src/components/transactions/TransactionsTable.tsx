@@ -1,5 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { TransactionRow } from "../../types/portfolio";
 import { DataTable } from "../ui/data-table";
 import { Badge } from "../ui/badge";
@@ -61,7 +62,33 @@ const IdentifierCell = ({ value }: { value: string | null | undefined }) => {
 };
 
 export const TransactionsTable = ({ rows }: { rows: TransactionRow[] }) => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
+  const requestedTransactionId = searchParams.get("transaction");
+
+  useEffect(() => {
+    if (!requestedTransactionId) {
+      return;
+    }
+
+    setSelectedTransaction(
+      rows.find((transaction) => transaction.transaktionId === requestedTransactionId) ?? null,
+    );
+  }, [requestedTransactionId, rows]);
+
+  const selectTransaction = (transaction: TransactionRow) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("transaction", transaction.transaktionId);
+    setSearchParams(nextSearchParams, { replace: true });
+    setSelectedTransaction(transaction);
+  };
+
+  const closeTransaction = () => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete("transaction");
+    setSearchParams(nextSearchParams, { replace: true });
+    setSelectedTransaction(null);
+  };
 
   const columns = useMemo<ColumnDef<TransactionRow>[]>(
     () => [
@@ -136,7 +163,7 @@ export const TransactionsTable = ({ rows }: { rows: TransactionRow[] }) => {
         searchPlaceholder="Search asset, order id, or trade id..."
         className="tabular [&_table]:table-fixed [&_td]:align-top [&_th]:whitespace-nowrap"
         tableContainerClassName="max-h-[70vh] overflow-y-auto"
-        onRowClick={(row) => setSelectedTransaction(row)}
+        onRowClick={selectTransaction}
         rowClassName={(row) =>
           row.original.transaktionId === selectedTransaction?.transaktionId ? "bg-[#18212b]" : ""
         }
@@ -144,7 +171,7 @@ export const TransactionsTable = ({ rows }: { rows: TransactionRow[] }) => {
 
       <TransactionDetailDrawer
         transaction={selectedTransaction}
-        onClose={() => setSelectedTransaction(null)}
+        onClose={closeTransaction}
       />
     </>
   );

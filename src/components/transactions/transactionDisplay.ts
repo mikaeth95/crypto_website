@@ -16,6 +16,7 @@ export const transactionTone = (type: string) => {
   if (type === "Kauf") return "green";
   if (type === "Verkauf") return "orange";
   if (type === "Konvertierung") return "orange";
+  if (type === "Token-Umstellung") return "orange";
   if (type === "Auszahlung") return "red";
   return "default";
 };

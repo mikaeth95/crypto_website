@@ -685,6 +685,7 @@ export const LiveChartsPage = ({ data }: { data: WorkbookData | null }) => {
             ? `Live multi-asset monitoring for ${selectedRepresentedAccount.name}.`
             : "Live multi-asset monitoring for the current represented account."
         }
+        updatedAt={data?.loadedAt}
         className={isFullscreen ? "mb-3 shrink-0" : undefined}
         action={
           <div className="flex flex-wrap items-center gap-2">

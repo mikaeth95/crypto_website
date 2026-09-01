@@ -14,6 +14,7 @@ export const PerformancePage = ({ data }: { data: WorkbookData }) => {
         title="Coin Performance"
         description="Momentum, drawdown, and volatility analytics across tracked coins."
         action={<Badge tone="blue">{rows.length} Assets</Badge>}
+        updatedAt={data.loadedAt}
       />
       <PerformanceCharts rows={rows} />
       <PerformanceTable rows={rows} assets={data.assets} transactions={data.transactions} />

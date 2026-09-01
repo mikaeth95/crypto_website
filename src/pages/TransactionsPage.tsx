@@ -68,6 +68,7 @@ export const TransactionsPage = ({ data }: { data: WorkbookData }) => {
         <PageHeader
           title="Transactions"
           description="Import exchange exports and keep only new transaction rows in the dashboard."
+          updatedAt={data.loadedAt}
           action={
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="blue">{data.transactions.length} Entries</Badge>

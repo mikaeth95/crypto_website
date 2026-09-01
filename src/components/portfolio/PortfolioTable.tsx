@@ -1,43 +1,54 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DataTable } from "../ui/data-table";
+import { AssetTableCell } from "../ui/asset-table-cell";
 import { formatCurrency, formatNumber, formatPercent, signedClass } from "../../lib/formatters";
 import type { PortfolioDisplayRow } from "../../hooks/usePortfolioLiveData";
+import { resolveCryptoBubbleAsset, useCryptoBubbleAssets } from "../../hooks/useCryptoBubbleAssets";
 import type { CoinPerformanceRow, TransactionRow } from "../../types/portfolio";
 import { AssetDetailDrawer } from "./AssetDetailDrawer";
-import { Card } from "../ui/card";
 import { PageHeader } from "../ui/page-header";
 import { Badge } from "../ui/badge";
 import { buildCoinMarketCapUrl } from "../../lib/coinmarketcap";
 
-type BubbleAsset = {
-  image?: string;
-  slug?: string;
-  symbol?: string;
-  symbols?: Record<string, string | undefined>;
-};
-
-const BUBBLES_DATA_URL = "/data/bubbles1000.json";
-const CRYPTO_BUBBLES_ASSET_BASE_URL = "https://cryptobubbles.net/backend/";
 const CMC_LOGO_URL = "/data/img/cmc_logo.png";
 const CRYPTO_COM_EXCHANGE_LOGO_URL = "/data/img/cryptocom_exchange.png";
+const TRADINGVIEW_LOGO_URL = "/data/img/tradingview_logo.png";
 
-const buildBubbleImageUrl = (imagePath: string | undefined) => {
-  if (!imagePath) {
+const resolveCryptoComInstrument = (
+  instrument: string | undefined,
+  asset: string | undefined,
+  quote: string | undefined,
+) => {
+  const normalizedInstrument = instrument?.trim().toUpperCase();
+  const normalizedAsset = asset?.trim().toUpperCase();
+  const normalizedQuote = quote?.trim().toUpperCase();
+
+  if (!normalizedInstrument || !normalizedAsset || !normalizedQuote) {
     return null;
   }
 
-  return new URL(imagePath, CRYPTO_BUBBLES_ASSET_BASE_URL).toString();
+  return `${normalizedAsset}_${normalizedQuote}`;
 };
 
-const buildCryptoComExchangeUrl = (instrument: string | undefined) => {
+const buildCryptoComExchangeUrl = (instrument: string | null) => {
   const normalizedInstrument = instrument?.trim();
 
   if (!normalizedInstrument) {
     return null;
   }
 
-  return `https://crypto.com/exchange-pro/trade/${encodeURIComponent(normalizedInstrument)}`;
+  return `https://crypto.com/exchange/trade/${encodeURIComponent(normalizedInstrument)}`;
+};
+
+const buildTradingViewUrl = (instrument: string | null) => {
+  const normalizedInstrument = instrument?.trim().replace(/_/g, "");
+
+  if (!normalizedInstrument) {
+    return null;
+  }
+
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(`CRYPTOCOM:${normalizedInstrument}`)}`;
 };
 
 const formatQuoteCurrency = (value: number | null | undefined, quote: string | null | undefined) => {
@@ -66,77 +77,24 @@ export const PortfolioTable = ({
   rows,
   performance,
   transactions,
+  updatedAt,
 }: {
   rows: PortfolioDisplayRow[];
   performance: CoinPerformanceRow[];
   transactions: TransactionRow[];
+  updatedAt: string | null;
 }) => {
   const [selected, setSelected] = useState<PortfolioDisplayRow | null>(null);
-  const [bubbleAssetsBySymbol, setBubbleAssetsBySymbol] = useState<Record<string, BubbleAsset>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void fetch(BUBBLES_DATA_URL)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Unable to load bubbles data: ${response.status}`);
-        }
-
-        return response.json() as Promise<BubbleAsset[]>;
-      })
-      .then((bubbleAssets) => {
-        if (cancelled) {
-          return;
-        }
-
-        const nextLookup = bubbleAssets.reduce<Record<string, BubbleAsset>>((lookup, asset) => {
-          const symbol = asset.symbol?.trim().toUpperCase();
-
-          if (symbol && !lookup[symbol]) {
-            lookup[symbol] = asset;
-          }
-
-          return lookup;
-        }, {});
-
-        setBubbleAssetsBySymbol(nextLookup);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBubbleAssetsBySymbol({});
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const bubbleAssetsBySymbol = useCryptoBubbleAssets();
 
   const columns = useMemo<ColumnDef<PortfolioDisplayRow>[]>(
     () => [
       {
         accessorKey: "asset",
         header: "Asset",
-        cell: (info) => {
-          const asset = info.getValue<string>();
-          const bubbleAsset = bubbleAssetsBySymbol[asset.toUpperCase()];
-          const imageUrl = buildBubbleImageUrl(bubbleAsset?.image);
-
-          return (
-            <span className="inline-flex items-center gap-2 font-medium text-slate-100">
-              {imageUrl ? (
-                <img
-                  src={imageUrl}
-                  alt=""
-                  className="h-5 w-5 rounded-full bg-slate-950/60 object-cover"
-                  loading="lazy"
-                />
-              ) : null}
-              <span>{asset}</span>
-            </span>
-          );
-        },
+        cell: (info) => (
+          <AssetTableCell asset={info.getValue<string>()} bubbleAssetsBySymbol={bubbleAssetsBySymbol} />
+        ),
       },
       { accessorKey: "quote", header: "Quote" },
       {
@@ -188,9 +146,15 @@ export const PortfolioTable = ({
         header: "Links",
         enableSorting: false,
         cell: (info) => {
-          const bubbleAsset = bubbleAssetsBySymbol[info.row.original.asset.toUpperCase()];
+          const bubbleAsset = resolveCryptoBubbleAsset(info.row.original.asset, bubbleAssetsBySymbol);
           const slug = bubbleAsset?.slug?.trim();
-          const cryptoComExchangeUrl = buildCryptoComExchangeUrl(bubbleAsset?.symbols?.cryptocom);
+          const cryptoComInstrument = resolveCryptoComInstrument(
+            bubbleAsset?.symbols?.cryptocom,
+            info.row.original.asset,
+            info.row.original.quote,
+          );
+          const cryptoComExchangeUrl = buildCryptoComExchangeUrl(cryptoComInstrument);
+          const tradingViewUrl = buildTradingViewUrl(cryptoComInstrument);
 
           if (!slug && !cryptoComExchangeUrl) {
             return <span className="text-slate-600">n/a</span>;
@@ -227,6 +191,23 @@ export const PortfolioTable = ({
                   />
                 </a>
               ) : null}
+              {tradingViewUrl ? (
+                <a
+                  href={tradingViewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label={`Open ${info.row.original.asset} on TradingView`}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/80 bg-[#101722] transition hover:border-slate-500/80 hover:bg-[#151c25]"
+                >
+                  <img
+                    src={TRADINGVIEW_LOGO_URL}
+                    alt=""
+                    className="h-10 w-10 max-w-none object-cover"
+                    loading="lazy"
+                  />
+                </a>
+              ) : null}
             </div>
           );
         },
@@ -241,16 +222,13 @@ export const PortfolioTable = ({
         title="Portfolio"
         description="Holdings, valuation, and unrealized performance by asset."
         action={<Badge tone="blue">{rows.length} Assets</Badge>}
+        updatedAt={updatedAt}
       />
-      <Card>
-        <p className="text-sm leading-6 text-slate-400">
-          Click a row to open a full asset detail panel with key stats and related transactions.
-        </p>
-      </Card>
       <DataTable
         columns={columns}
         data={rows}
         searchPlaceholder="Search asset..."
+        searchHint="Select a row for details."
         className="tabular"
         onRowClick={(row) => setSelected(row)}
       />

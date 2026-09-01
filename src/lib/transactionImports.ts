@@ -64,6 +64,7 @@ type PortfolioAggregateState = {
 
 const IMPORT_SOURCE_LABEL = "Imported CSV";
 const CRYPTO_COM_EXCHANGE_LABEL = "Crypto.com Exchange";
+const TOKEN_MIGRATION_TRANSACTION_TYPE = "Token-Umstellung";
 const CSV_HEADER_PREFIX = "Journal ID,";
 const FLOATING_POINT_EPSILON = 1e-9;
 
@@ -297,6 +298,12 @@ const buildConversionExternalId = (rows: CryptoComExchangeCsvRow[]): string => {
   return `crypto_com_exchange:conversion:${tradeMatchId ?? clientOrderId ?? rows.map((row) => row.journalId).join("-")}`;
 };
 
+const buildTokenMigrationExternalId = (rows: CryptoComExchangeCsvRow[]): string => {
+  const clientOrderId = rows.find((row) => row.clientOrderId)?.clientOrderId;
+
+  return `crypto_com_exchange:token_migration:${clientOrderId ?? rows.map((row) => row.journalId).join("-")}`;
+};
+
 const sumFeeRows = (rows: CryptoComExchangeCsvRow[]) => {
   const feeRows = rows.filter((row) => row.journalType === "TRADE_FEE");
   const fee = feeRows.reduce((total, row) => total + Math.abs(row.transactionQuantity ?? 0), 0);
@@ -448,6 +455,49 @@ const buildConversionTransaction = (
   };
 };
 
+const buildTokenMigrationTransaction = (
+  rows: CryptoComExchangeCsvRow[],
+  sourceFileName: string,
+): ImportedTransactionInput | null => {
+  const adjustmentRows = rows.filter((row) => row.journalType === "ADMIN_ADJUSTMENT");
+  const positiveRow = adjustmentRows.find((row) => (row.transactionQuantity ?? 0) > 0);
+  const negativeRow = adjustmentRows.find((row) => (row.transactionQuantity ?? 0) < 0);
+
+  if (!positiveRow || !negativeRow) {
+    return null;
+  }
+
+  const asset = normalizeImportedAssetCode(positiveRow.instrument);
+  const previousAsset = normalizeImportedAssetCode(negativeRow.instrument);
+  const quantity = Math.abs(positiveRow.transactionQuantity ?? 0);
+  const previousQuantity = Math.abs(negativeRow.transactionQuantity ?? 0);
+  const occurredAt = parseUtcTimestamp(positiveRow.timeUtc, positiveRow.eventDate);
+
+  if (!asset || !previousAsset || asset === previousAsset || !occurredAt || quantity <= 0 || previousQuantity <= 0) {
+    return null;
+  }
+
+  return {
+    source_platform: "crypto_com_exchange",
+    external_id: buildTokenMigrationExternalId(adjustmentRows),
+    source_file_name: sourceFileName,
+    occurred_at: occurredAt,
+    transaction_type: TOKEN_MIGRATION_TRANSACTION_TYPE,
+    asset,
+    quote: previousAsset,
+    quantity: roundTo(quantity),
+    execution_price: roundTo(previousQuantity / quantity),
+    gross_value: roundTo(previousQuantity),
+    fee: null,
+    fee_currency: null,
+    net_quantity: roundTo(quantity),
+    net_value: roundTo(previousQuantity),
+    exchange: CRYPTO_COM_EXCHANGE_LABEL,
+    data_source: IMPORT_SOURCE_LABEL,
+    raw_payload: adjustmentRows,
+  };
+};
+
 const mapGenericJournalType = (journalType: string): string => {
   if (journalType.includes("DEPOSIT")) {
     return "Einzahlung";
@@ -510,6 +560,8 @@ export const parseCryptoComExchangeTransactions = (
     const key =
       row.journalType === "STABLECOIN_CONVERSION"
         ? `conversion:${row.tradeMatchId ?? row.clientOrderId ?? row.journalId}`
+        : row.journalType === "ADMIN_ADJUSTMENT" && row.clientOrderId
+          ? `admin_adjustment:${row.clientOrderId}`
         : row.journalType === "TRADING" || row.journalType === "TRADE_FEE"
           ? `trade:${row.tradeMatchId ?? row.tradeId ?? row.orderId ?? row.journalId}`
           : `journal:${row.journalId}`;
@@ -520,20 +572,31 @@ export const parseCryptoComExchangeTransactions = (
   });
 
   return Array.from(groupedRows.values())
-    .map((rows) => {
+    .flatMap((rows): ImportedTransactionInput[] => {
       const journalTypes = new Set(rows.map((row) => row.journalType));
 
       if (journalTypes.has("STABLECOIN_CONVERSION")) {
-        return buildConversionTransaction(rows, sourceFileName);
+        const transaction = buildConversionTransaction(rows, sourceFileName);
+        return transaction ? [transaction] : [];
+      }
+
+      if (journalTypes.has("ADMIN_ADJUSTMENT")) {
+        const migration = buildTokenMigrationTransaction(rows, sourceFileName);
+
+        if (migration) {
+          return [migration];
+        }
       }
 
       if (journalTypes.has("TRADING") || journalTypes.has("TRADE_FEE")) {
-        return buildTradeTransaction(rows, sourceFileName);
+        const transaction = buildTradeTransaction(rows, sourceFileName);
+        return transaction ? [transaction] : [];
       }
 
-      return buildGenericTransaction(rows[0], sourceFileName);
+      return rows
+        .map((row) => buildGenericTransaction(row, sourceFileName))
+        .filter((transaction): transaction is ImportedTransactionInput => transaction !== null);
     })
-    .filter((transaction): transaction is ImportedTransactionInput => transaction !== null)
     .sort(
       (left, right) =>
         new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
@@ -563,6 +626,81 @@ const toRawPayloadRows = (rawPayload: unknown): Partial<CryptoComExchangeCsvRow>
   return isRawPayloadRow(rawPayload) ? [rawPayload] : [];
 };
 
+const normalizeLegacyTokenMigrations = (
+  records: ImportedTransactionRecord[],
+): ImportedTransactionRecord[] => {
+  const adjustmentGroups = new Map<
+    string,
+    Array<{ record: ImportedTransactionRecord; row: Partial<CryptoComExchangeCsvRow> }>
+  >();
+  const existingExternalIds = new Set(records.map((record) => record.external_id));
+
+  records.forEach((record) => {
+    if (record.transaction_type !== "ADMIN ADJUSTMENT") {
+      return;
+    }
+
+    const row = toRawPayloadRows(record.raw_payload)[0];
+    const clientOrderId = row?.clientOrderId?.trim();
+
+    if (!row || !clientOrderId) {
+      return;
+    }
+
+    const group = adjustmentGroups.get(clientOrderId) ?? [];
+    group.push({ record, row });
+    adjustmentGroups.set(clientOrderId, group);
+  });
+
+  const consumedRecordIds = new Set<string>();
+  const migrations: ImportedTransactionRecord[] = [];
+
+  adjustmentGroups.forEach((group, clientOrderId) => {
+    const positive = group.find(({ row }) => (coerceNumericValue(row.transactionQuantity) ?? 0) > 0);
+    const negative = group.find(({ row }) => (coerceNumericValue(row.transactionQuantity) ?? 0) < 0);
+
+    if (!positive || !negative) {
+      return;
+    }
+
+    const asset = normalizeImportedAssetCode(positive.record.asset);
+    const previousAsset = normalizeImportedAssetCode(negative.record.asset);
+    const quantity = Math.abs(coerceNumericValue(positive.row.transactionQuantity) ?? 0);
+    const previousQuantity = Math.abs(coerceNumericValue(negative.row.transactionQuantity) ?? 0);
+
+    if (!asset || !previousAsset || asset === previousAsset || quantity <= 0 || previousQuantity <= 0) {
+      return;
+    }
+
+    group.forEach(({ record }) => consumedRecordIds.add(record.id));
+
+    const externalId = `crypto_com_exchange:token_migration:${clientOrderId}`;
+
+    if (existingExternalIds.has(externalId)) {
+      return;
+    }
+
+    migrations.push({
+      ...positive.record,
+      id: `legacy-${externalId}`,
+      external_id: externalId,
+      transaction_type: TOKEN_MIGRATION_TRANSACTION_TYPE,
+      asset,
+      quote: previousAsset,
+      quantity: roundTo(quantity),
+      execution_price: roundTo(previousQuantity / quantity),
+      gross_value: roundTo(previousQuantity),
+      fee: null,
+      fee_currency: null,
+      net_quantity: roundTo(quantity),
+      net_value: roundTo(previousQuantity),
+      raw_payload: group.map(({ row }) => row),
+    });
+  });
+
+  return [...records.filter((record) => !consumedRecordIds.has(record.id)), ...migrations];
+};
+
 const firstNonEmptyString = (values: Array<string | null | undefined>) =>
   values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim() ?? null;
 
@@ -588,6 +726,7 @@ const extractTransactionIdentifiers = (rawPayload: unknown) => {
 const toTransactionRow = (record: ImportedTransactionRecord): TransactionRow => ({
   ...extractTransactionIdentifiers(record.raw_payload),
   datum: record.occurred_at ? record.occurred_at.slice(0, 10) : null,
+  occurredAt: record.occurred_at,
   typ: record.transaction_type,
   asset: record.asset,
   quote: record.quote,
@@ -695,6 +834,47 @@ const derivePortfolioAssets = (records: ImportedTransactionRecord[]): PortfolioA
       remainingQuantity = removeAggregateQuantity(aggregate, remainingQuantity, 1);
     });
   };
+  const migrateAcrossAssetAggregates = (
+    previousAsset: string,
+    nextAsset: string,
+    previousQuantity: number,
+    nextQuantity: number,
+  ) => {
+    if (
+      previousAsset === nextAsset ||
+      previousQuantity <= FLOATING_POINT_EPSILON ||
+      nextQuantity <= FLOATING_POINT_EPSILON
+    ) {
+      return;
+    }
+
+    let remainingPreviousQuantity = previousQuantity;
+    const conversionRate = nextQuantity / previousQuantity;
+    const matchingAggregates = Array.from(aggregates.values()).filter(
+      (aggregate) => aggregate.asset === previousAsset && aggregate.quantityHeld > FLOATING_POINT_EPSILON,
+    );
+
+    matchingAggregates.forEach((aggregate) => {
+      if (remainingPreviousQuantity <= FLOATING_POINT_EPSILON) {
+        return;
+      }
+
+      const quantityToMigrate = Math.min(remainingPreviousQuantity, aggregate.quantityHeld);
+      const averageCost = aggregate.costBasis / aggregate.quantityHeld;
+      const migratedCostBasis = roundTo(averageCost * quantityToMigrate);
+      const migratedTradeCount = aggregate.tradeCount;
+
+      removeAggregateQuantity(aggregate, quantityToMigrate, 0);
+      addAggregateQuantity(
+        nextAsset,
+        aggregate.quote,
+        roundTo(quantityToMigrate * conversionRate),
+        migratedCostBasis,
+        migratedTradeCount,
+      );
+      remainingPreviousQuantity = roundTo(remainingPreviousQuantity - quantityToMigrate);
+    });
+  };
 
   sortedRecords.forEach((record) => {
     const asset = record.asset?.trim();
@@ -742,6 +922,15 @@ const derivePortfolioAssets = (records: ImportedTransactionRecord[]): PortfolioA
 
       addAggregateQuantity(asset, quote, netQuantity, netValue, 1);
       removeAcrossAssetAggregates(quote, netValue);
+      return;
+    }
+
+    if (record.transaction_type === TOKEN_MIGRATION_TRANSACTION_TYPE) {
+      if (!quote) {
+        return;
+      }
+
+      migrateAcrossAssetAggregates(quote, asset, netValue, netQuantity);
       return;
     }
 
@@ -883,7 +1072,7 @@ const deriveSummaryFromPortfolioAssets = (assets: PortfolioAssetRow[]): Portfoli
 export const buildWorkbookDataFromImportedTransactions = (
   records: ImportedTransactionRecord[],
 ): WorkbookData => {
-  const sortedRecords = [...records].sort(
+  const sortedRecords = normalizeLegacyTokenMigrations(records).sort(
     (left, right) => new Date(right.occurred_at).getTime() - new Date(left.occurred_at).getTime(),
   );
   const transactions = sortedRecords.map(toTransactionRow);

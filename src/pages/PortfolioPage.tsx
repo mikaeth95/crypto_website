@@ -10,6 +10,7 @@ export const PortfolioPage = ({ data }: { data: WorkbookData }) => {
       rows={rows}
       performance={data.performance}
       transactions={data.transactions}
+      updatedAt={data.loadedAt}
     />
   );
 };

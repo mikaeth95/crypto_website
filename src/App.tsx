@@ -13,12 +13,13 @@ import { MarketsPage } from "./pages/MarketsPage";
 import { PerformancePage } from "./pages/PerformancePage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
+import { TradeHistoryPage } from "./pages/TradeHistoryPage";
 
 const ProtectedDashboardRoutes = () => {
   const { data, loading, error } = useAppData();
 
   return (
-    <DashboardLayout data={data}>
+    <DashboardLayout>
       {loading ? (
         <Card className="mb-4 animate-pulse">
           <PageHeader title="Loading Data" description="Loading imported transactions and rebuilding dashboard views..." />
@@ -41,9 +42,10 @@ const ProtectedDashboardRoutes = () => {
       <Routes>
         <Route path="/dashboard" element={<DashboardPage data={data} />} />
         <Route path="/portfolio" element={<PortfolioPage data={data} />} />
+        <Route path="/trade-history" element={<TradeHistoryPage data={data} />} />
         <Route path="/transactions" element={<TransactionsPage data={data} />} />
         <Route path="/performance" element={<PerformancePage data={data} />} />
-        <Route path="/markets" element={<MarketsPage />} />
+        <Route path="/markets" element={<MarketsPage updatedAt={data.loadedAt} />} />
         <Route path="/live-charts" element={<LiveChartsPage data={data} />} />
         <Route path="/live-charts/markets/:marketSymbol" element={<LiveChartsPage data={data} />} />
         <Route path="/live-charts/preset/:presetTabName/:presetSlug" element={<LiveChartsPage data={data} />} />

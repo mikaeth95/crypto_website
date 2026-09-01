@@ -7,7 +7,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Input } from "./input";
 import { cn } from "../../lib/utils";
 
@@ -15,6 +15,7 @@ export const DataTable = <T extends object>({
   columns,
   data,
   searchPlaceholder = "Search...",
+  searchHint,
   className,
   tableContainerClassName,
   tableClassName,
@@ -26,6 +27,7 @@ export const DataTable = <T extends object>({
   columns: ColumnDef<T>[];
   data: T[];
   searchPlaceholder?: string;
+  searchHint?: ReactNode;
   className?: string;
   tableContainerClassName?: string;
   tableClassName?: string;
@@ -47,12 +49,15 @@ export const DataTable = <T extends object>({
 
   return (
     <div className={cn("space-y-3", className)}>
-      <Input
-        value={globalFilter}
-        onChange={(event) => setGlobalFilter(event.target.value)}
-        placeholder={searchPlaceholder}
-        className="max-w-sm"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Input
+          value={globalFilter}
+          onChange={(event) => setGlobalFilter(event.target.value)}
+          placeholder={searchPlaceholder}
+          className="max-w-sm"
+        />
+        {searchHint ? <p className="text-xs text-slate-500">{searchHint}</p> : null}
+      </div>
 
       <div
         className={cn(
