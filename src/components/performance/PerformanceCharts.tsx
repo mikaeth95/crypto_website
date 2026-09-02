@@ -279,6 +279,48 @@ const RankedBarList = ({
   );
 };
 
+const DrawdownRecoveryAssetRow = ({
+  row,
+  maxMagnitude,
+}: {
+  row: DrawdownRecoveryDatum;
+  maxMagnitude: number;
+}) => {
+  const barWidth = (value: number) => `${Math.max(1.5, (Math.abs(value) / maxMagnitude) * 100)}%`;
+
+  return (
+    <div className="grid h-7 shrink-0 grid-cols-[40px_28px_minmax(0,1fr)_52px] grid-rows-[9px_9px] items-center gap-x-2 gap-y-0.5 border-b border-border/30 py-0.5 last:border-b-0">
+      <span className="row-span-2 self-center truncate text-[10px] font-semibold leading-none text-slate-200">{row.asset}</span>
+
+      <span className="font-mono text-[8px] font-medium uppercase leading-none tracking-[0.08em] text-emerald-300/70">90D</span>
+      <span className={cn("h-1.5 overflow-hidden rounded-full", row.recovery90D === null ? "bg-white/[0.035]" : "bg-emerald-500/10")}>
+        {row.recovery90D !== null ? (
+          <span
+            className="block h-full min-w-px rounded-full bg-emerald-500"
+            style={{ width: barWidth(row.recovery90D) }}
+          />
+        ) : null}
+      </span>
+      <span className={cn("tabular text-right text-[9px] font-semibold leading-none", row.recovery90D === null ? "text-slate-500" : "text-emerald-300")}>
+        {formatChartPercent(row.recovery90D, { signed: true })}
+      </span>
+
+      <span className="font-mono text-[8px] font-medium uppercase leading-none tracking-[0.08em] text-rose-300/70">ATH</span>
+      <span className={cn("h-1.5 overflow-hidden rounded-full", row.athDrawdown === null ? "bg-white/[0.035]" : "bg-rose-500/10")}>
+        {row.athDrawdown !== null ? (
+          <span
+            className="block h-full min-w-px rounded-full bg-rose-500"
+            style={{ width: barWidth(row.athDrawdown) }}
+          />
+        ) : null}
+      </span>
+      <span className={cn("tabular text-right text-[9px] font-semibold leading-none", row.athDrawdown === null ? "text-slate-500" : "text-rose-300")}>
+        {formatChartPercent(row.athDrawdown, { signed: true })}
+      </span>
+    </div>
+  );
+};
+
 const DrawdownRecoveryList = ({ data }: { data: DrawdownRecoveryDatum[] }) => {
   if (!data.length) {
     return <div className="flex h-56 items-center justify-center text-xs text-slate-500">No data</div>;
@@ -288,42 +330,12 @@ const DrawdownRecoveryList = ({ data }: { data: DrawdownRecoveryDatum[] }) => {
     1,
     ...data.flatMap((row) => [Math.abs(row.athDrawdown ?? 0), Math.abs(row.recovery90D ?? 0)]),
   );
-  const barWidth = (value: number | null) =>
-    value === null ? "0%" : `${Math.max(1.5, (Math.abs(value) / maxMagnitude) * 100)}%`;
-
-  const contentHeight = Math.max(224, data.length * 28);
 
   return (
     <div className="h-56 overflow-y-auto pr-1">
-      <div className="flex flex-col justify-between" style={{ height: contentHeight }}>
+      <div style={{ height: data.length * 28 }}>
         {data.map((row) => (
-          <div
-            key={row.key}
-            className="grid grid-cols-[36px_26px_minmax(0,1fr)_48px] items-center gap-x-2 gap-y-1"
-          >
-            <span className="row-span-2 truncate text-[10px] font-semibold text-slate-200">{row.asset}</span>
-            <span className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-rose-300/70">ATH</span>
-            <span className="h-1.5 overflow-hidden rounded-full bg-rose-500/10">
-              <span
-                className="block h-full min-w-px rounded-full bg-rose-500"
-                style={{ width: barWidth(row.athDrawdown), minWidth: row.athDrawdown === null ? 0 : 1 }}
-              />
-            </span>
-            <span className="tabular text-right text-[9px] font-semibold text-rose-300">
-              {formatChartPercent(row.athDrawdown, { signed: true })}
-            </span>
-
-            <span className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-emerald-300/70">90D</span>
-            <span className="h-1.5 overflow-hidden rounded-full bg-emerald-500/10">
-              <span
-                className="block h-full rounded-full bg-emerald-500"
-                style={{ width: barWidth(row.recovery90D), minWidth: row.recovery90D === null ? 0 : 1 }}
-              />
-            </span>
-            <span className="tabular text-right text-[9px] font-semibold text-emerald-300">
-              {formatChartPercent(row.recovery90D, { signed: true })}
-            </span>
-          </div>
+          <DrawdownRecoveryAssetRow key={row.key} row={row} maxMagnitude={maxMagnitude} />
         ))}
       </div>
     </div>
