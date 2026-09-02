@@ -8,16 +8,18 @@ export const ChartPanel = ({
   action,
   children,
   className,
+  headerClassName,
   bodyClassName,
 }: PropsWithChildren<{
   title: string;
   subtitle?: string;
   action?: ReactNode;
   className?: string;
+  headerClassName?: string;
   bodyClassName?: string;
 }>) => (
   <Card className={cn("overflow-hidden p-0", className)}>
-    <div className="flex items-start justify-between gap-3 border-b border-border/80 px-5 py-4">
+    <div className={cn("flex items-start justify-between gap-3 border-b border-border/80 px-5 py-4", headerClassName)}>
       <div>
         <h3 className="text-sm font-semibold tracking-[-0.01em] text-slate-100 md:text-base">{title}</h3>
         {subtitle ? <p className="mt-1 text-xs leading-5 text-slate-400">{subtitle}</p> : null}

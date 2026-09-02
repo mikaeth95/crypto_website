@@ -13,8 +13,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useState } from "react";
 import type { PerformanceDisplayRow } from "../../hooks/usePerformanceMarketData";
-import { formatChartPercent } from "../../lib/formatters";
+import { formatChartPercent, formatChartPrice } from "../../lib/formatters";
+import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { ChartPanel } from "../ui/chart-panel";
 
@@ -26,8 +28,15 @@ const WATCH_COLOR = "#F59E0B";
 type RankedBarDatum = {
   key: string;
   asset: string;
-  value: number;
+  value: number | null;
   magnitude: number;
+};
+
+type DrawdownRecoveryDatum = {
+  key: string;
+  asset: string;
+  athDrawdown: number | null;
+  recovery90D: number | null;
 };
 
 type Quadrant = "recovery" | "leaders" | "weak" | "watch";
@@ -38,7 +47,12 @@ type ScatterDatum = {
   x: number;
   y: number;
   quadrant: Quadrant;
-  label: string;
+  currentPrice: number | null;
+  avgBuy: number | null;
+  quote: string;
+  recoveryLabel: string;
+  leaderLabel: string;
+  weakestLabel: string;
 };
 
 type TooltipProps<T> = {
@@ -46,13 +60,49 @@ type TooltipProps<T> = {
   payload?: Array<{ payload?: T }>;
 };
 
-type BarValueLabelProps = {
+type RankedBarShapeProps = {
   x?: number | string;
   y?: number | string;
   width?: number | string;
   height?: number | string;
-  value?: number | string;
+  payload?: RankedBarDatum;
 };
+
+type PerformanceView = "top" | "bottom" | "all";
+type DrawdownView = "worst" | "recovery" | "all";
+
+const CompactViewSelector = <T extends string,>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+  label: string;
+}) => (
+  <div
+    role="group"
+    aria-label={label}
+    className="inline-flex rounded-lg border border-border/80 bg-panelSoft/85 p-0.5"
+  >
+    {options.map((option) => (
+      <button
+        key={option.value}
+        type="button"
+        onClick={() => onChange(option.value)}
+        aria-pressed={value === option.value}
+        className={cn(
+          "rounded-md px-2 py-1 text-[9px] font-medium text-slate-500 transition-colors hover:text-slate-300",
+          value === option.value && "bg-white/[0.07] text-slate-100",
+        )}
+      >
+        {option.label}
+      </button>
+    ))}
+  </div>
+);
 
 const getQuadrant = (x: number, y: number): Quadrant => {
   if (y >= 0) {
@@ -89,11 +139,21 @@ const buildZeroDomain = (values: number[]) => {
   return [min === 0 ? -padding : min - padding, max === 0 ? padding : max + padding] as const;
 };
 
-const toRankedBarDatum = (row: PerformanceDisplayRow, value: number): RankedBarDatum => ({
+const toRankedBarDatum = (row: PerformanceDisplayRow, value: number | null): RankedBarDatum => ({
   key: `${row.asset}-${row.quote}`,
   asset: row.asset,
   value,
-  magnitude: Math.abs(value),
+  magnitude: Math.abs(value ?? 0),
+});
+
+const toDrawdownRecoveryDatum = (row: PerformanceDisplayRow): DrawdownRecoveryDatum => ({
+  key: `${row.asset}-${row.quote}`,
+  asset: row.asset,
+  athDrawdown: row.athDrawdownResolved,
+  recovery90D:
+    row.currentPriceResolved !== null && row.low90DResolved !== null && row.low90DResolved > 0
+      ? ((row.currentPriceResolved / row.low90DResolved) - 1) * 100
+      : null,
 });
 
 const RankedPercentTooltip = ({ active, payload }: TooltipProps<RankedBarDatum>) => {
@@ -106,7 +166,7 @@ const RankedPercentTooltip = ({ active, payload }: TooltipProps<RankedBarDatum>)
   return (
     <div className="rounded-xl border border-border bg-panelSoft/95 px-3 py-2 shadow-xl">
       <p className="text-xs font-semibold text-slate-100">{row.asset}</p>
-      <p className={`tabular mt-1 text-xs ${row.value >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+      <p className={`tabular mt-1 text-xs ${row.value === null ? "text-slate-400" : row.value >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
         {formatChartPercent(row.value, { signed: true })}
       </p>
     </div>
@@ -124,33 +184,56 @@ const ScatterPercentTooltip = ({ active, payload }: TooltipProps<ScatterDatum>) 
     <div className="rounded-xl border border-border bg-panelSoft/95 px-3 py-2 shadow-xl">
       <p className="text-xs font-semibold text-slate-100">{row.asset}</p>
       <div className="tabular mt-1.5 space-y-1 text-[11px] text-slate-300">
-        <p>Distance from Avg Buy: {formatChartPercent(row.x, { signed: true })}</p>
         <p>30D Performance: {formatChartPercent(row.y, { signed: true })}</p>
+        <p>Distance from Avg Buy: {formatChartPercent(row.x, { signed: true })}</p>
+        <p>Current Price: {formatChartPrice(row.currentPrice, row.quote)}</p>
+        <p>Avg Buy: {formatChartPrice(row.avgBuy, row.quote)}</p>
         <p style={{ color: quadrantColors[row.quadrant] }}>{quadrantLabels[row.quadrant]}</p>
       </div>
     </div>
   );
 };
 
-const RankedBarValueLabel = ({ x = 0, y = 0, width = 0, height = 0, value }: BarValueLabelProps) => {
-  const numericValue = Number(value);
+const RankedBarShape = ({ x = 0, y = 0, width = 0, height = 0, payload }: RankedBarShapeProps) => {
+  const numericValue = payload?.value;
 
-  if (!Number.isFinite(numericValue)) {
+  if (numericValue === undefined) {
     return null;
   }
 
+  const numericX = Number(x);
+  const numericY = Number(y);
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  const hasValue = numericValue !== null && Number.isFinite(numericValue);
+  const renderedWidth = hasValue ? Math.max(numericWidth, 1) : 0;
+  const color = hasValue ? (numericValue >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR) : "#64748B";
+
   return (
-    <text
-      x={Number(x) + Number(width) + 7}
-      y={Number(y) + Number(height) / 2}
-      dy="0.35em"
-      fill={numericValue >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR}
-      fontSize={10}
-      fontWeight={600}
-      textAnchor="start"
-    >
-      {formatChartPercent(numericValue, { signed: true })}
-    </text>
+    <g>
+      {hasValue ? (
+        <rect
+          x={numericX}
+          y={numericY}
+          width={renderedWidth}
+          height={numericHeight}
+          rx={Math.min(5, numericHeight / 2)}
+          ry={Math.min(5, numericHeight / 2)}
+          fill={color}
+        />
+      ) : null}
+      <text
+        x={numericX + renderedWidth + 7}
+        y={numericY + numericHeight / 2}
+        dy="0.35em"
+        fill={color}
+        fontSize={10}
+        fontWeight={600}
+        textAnchor="start"
+      >
+        {formatChartPercent(numericValue, { signed: true })}
+      </text>
+    </g>
   );
 };
 
@@ -170,7 +253,7 @@ const RankedBarList = ({
   return (
     <div style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 2, right: 58, bottom: 2, left: 0 }}>
+        <BarChart data={data} layout="vertical" margin={{ top: 2, right: 68, bottom: 2, left: 0 }}>
           <CartesianGrid stroke="#1e2630" strokeDasharray="3 3" horizontal={false} />
           <XAxis type="number" dataKey="magnitude" hide domain={[0, maxMagnitude]} />
           <YAxis
@@ -183,14 +266,66 @@ const RankedBarList = ({
             tickLine={false}
           />
           <Tooltip cursor={{ fill: "rgba(255,255,255,0.025)" }} content={<RankedPercentTooltip />} />
-          <Bar dataKey="magnitude" barSize={9} radius={[0, 5, 5, 0]}>
-            {data.map((row) => (
-              <Cell key={row.key} fill={row.value >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR} />
-            ))}
-            <LabelList dataKey="value" content={<RankedBarValueLabel />} />
-          </Bar>
+          <Bar
+            dataKey="magnitude"
+            barSize={9}
+            minPointSize={1}
+            shape={<RankedBarShape />}
+            isAnimationActive={false}
+          />
         </BarChart>
       </ResponsiveContainer>
+    </div>
+  );
+};
+
+const DrawdownRecoveryList = ({ data }: { data: DrawdownRecoveryDatum[] }) => {
+  if (!data.length) {
+    return <div className="flex h-56 items-center justify-center text-xs text-slate-500">No data</div>;
+  }
+
+  const maxMagnitude = Math.max(
+    1,
+    ...data.flatMap((row) => [Math.abs(row.athDrawdown ?? 0), Math.abs(row.recovery90D ?? 0)]),
+  );
+  const barWidth = (value: number | null) =>
+    value === null ? "0%" : `${Math.max(1.5, (Math.abs(value) / maxMagnitude) * 100)}%`;
+
+  const contentHeight = Math.max(224, data.length * 28);
+
+  return (
+    <div className="h-56 overflow-y-auto pr-1">
+      <div className="flex flex-col justify-between" style={{ height: contentHeight }}>
+        {data.map((row) => (
+          <div
+            key={row.key}
+            className="grid grid-cols-[36px_26px_minmax(0,1fr)_48px] items-center gap-x-2 gap-y-1"
+          >
+            <span className="row-span-2 truncate text-[10px] font-semibold text-slate-200">{row.asset}</span>
+            <span className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-rose-300/70">ATH</span>
+            <span className="h-1.5 overflow-hidden rounded-full bg-rose-500/10">
+              <span
+                className="block h-full min-w-px rounded-full bg-rose-500"
+                style={{ width: barWidth(row.athDrawdown), minWidth: row.athDrawdown === null ? 0 : 1 }}
+              />
+            </span>
+            <span className="tabular text-right text-[9px] font-semibold text-rose-300">
+              {formatChartPercent(row.athDrawdown, { signed: true })}
+            </span>
+
+            <span className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-emerald-300/70">90D</span>
+            <span className="h-1.5 overflow-hidden rounded-full bg-emerald-500/10">
+              <span
+                className="block h-full rounded-full bg-emerald-500"
+                style={{ width: barWidth(row.recovery90D), minWidth: row.recovery90D === null ? 0 : 1 }}
+              />
+            </span>
+            <span className="tabular text-right text-[9px] font-semibold text-emerald-300">
+              {formatChartPercent(row.recovery90D, { signed: true })}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -206,22 +341,32 @@ const pickQuadrantRepresentative = (rows: ScatterDatum[], quadrant: Quadrant) =>
 };
 
 export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) => {
-  const rowsWith30D = [...rows]
+  const [performanceView, setPerformanceView] = useState<PerformanceView>("top");
+  const [drawdownView, setDrawdownView] = useState<DrawdownView>("worst");
+  const allPerformanceRows = [...rows].sort((left, right) => {
+    if (left.change30D === null) return right.change30D === null ? 0 : 1;
+    if (right.change30D === null) return -1;
+    return right.change30D - left.change30D;
+  });
+  const rowsWith30D = allPerformanceRows
     .filter((row): row is PerformanceDisplayRow & { change30D: number } => row.change30D !== null)
     .sort((left, right) => right.change30D - left.change30D);
   const topPerformers = rowsWith30D.slice(0, 5);
-  const topPerformerKeys = new Set(topPerformers.map((row) => `${row.asset}-${row.quote}`));
   const bottomPerformers = [...rowsWith30D]
     .sort((left, right) => left.change30D - right.change30D)
-    .filter((row) => !topPerformerKeys.has(`${row.asset}-${row.quote}`))
     .slice(0, 5);
-  const topPerformanceData = topPerformers.map((row) => toRankedBarDatum(row, row.change30D));
-  const bottomPerformanceData = bottomPerformers.map((row) => toRankedBarDatum(row, row.change30D));
+  const selectedPerformanceRows =
+    performanceView === "top" ? topPerformers : performanceView === "bottom" ? bottomPerformers : allPerformanceRows;
+  const performanceData = selectedPerformanceRows.map((row) => toRankedBarDatum(row, row.change30D));
   const performanceMaxMagnitude = Math.max(
     1,
-    ...topPerformanceData.map((row) => row.magnitude),
-    ...bottomPerformanceData.map((row) => row.magnitude),
+    ...performanceData.map((row) => row.magnitude),
   );
+  const performanceSectionLabel =
+    performanceView === "top" ? "Top performers" : performanceView === "bottom" ? "Bottom performers" : "All assets";
+  const strongest = rowsWith30D[0];
+  const weakest30D = bottomPerformers[0];
+  const performanceSummary = performanceView === "bottom" ? weakest30D : strongest;
 
   const rowsWithAthDrawdown = [...rows]
     .filter(
@@ -229,10 +374,25 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
         row.athDrawdownResolved !== null,
     )
     .sort((left, right) => left.athDrawdownResolved - right.athDrawdownResolved);
-  const athDrawdownData = rowsWithAthDrawdown
-    .slice(0, 8)
-    .map((row) => toRankedBarDatum(row, row.athDrawdownResolved));
-  const athMaxMagnitude = Math.max(1, ...athDrawdownData.map((row) => row.magnitude));
+  const allDrawdownRecoveryData = [...rows]
+    .sort((left, right) => {
+      if (left.athDrawdownResolved === null) return right.athDrawdownResolved === null ? 0 : 1;
+      if (right.athDrawdownResolved === null) return -1;
+      return left.athDrawdownResolved - right.athDrawdownResolved;
+    })
+    .map(toDrawdownRecoveryDatum);
+  const worstDrawdownData = rowsWithAthDrawdown.slice(0, 8).map(toDrawdownRecoveryDatum);
+  const recoveryData = [...allDrawdownRecoveryData]
+    .filter((row): row is DrawdownRecoveryDatum & { recovery90D: number } => row.recovery90D !== null)
+    .sort((left, right) => right.recovery90D - left.recovery90D)
+    .slice(0, 8);
+  const drawdownRecoveryData =
+    drawdownView === "worst"
+      ? worstDrawdownData
+      : drawdownView === "recovery"
+        ? recoveryData
+        : allDrawdownRecoveryData;
+  const strongestRecovery = recoveryData[0];
 
   const scatterRows: ScatterDatum[] = rows
     .filter(
@@ -251,20 +411,23 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
         x,
         y,
         quadrant: getQuadrant(x, y),
-        label: "",
+        currentPrice: row.currentPriceResolved,
+        avgBuy: row.avgBuy,
+        quote: row.quote,
+        recoveryLabel: "",
+        leaderLabel: "",
+        weakestLabel: "",
       };
     });
-  const labeledKeys = new Set(
-    (["recovery", "leaders", "weak", "watch"] as Quadrant[])
-      .map((quadrant) => pickQuadrantRepresentative(scatterRows, quadrant)?.key)
-      .filter((key): key is string => Boolean(key)),
-  );
+  const recoveryCandidate = pickQuadrantRepresentative(scatterRows, "recovery");
+  const strongestLeader = pickQuadrantRepresentative(scatterRows, "leaders");
+  const weakestMomentum = [...scatterRows].filter((row) => row.y < 0).sort((left, right) => left.y - right.y)[0];
   const labeledScatterRows = scatterRows.map((row) => ({
     ...row,
-    label: labeledKeys.has(row.key) ? row.asset : "",
+    recoveryLabel: row.key === recoveryCandidate?.key ? row.asset : "",
+    leaderLabel: row.key === strongestLeader?.key ? row.asset : "",
+    weakestLabel: row.key === weakestMomentum?.key ? row.asset : "",
   }));
-  const recoveryCandidate = pickQuadrantRepresentative(scatterRows, "recovery");
-  const strongest = rowsWith30D[0];
   const weakestAth = rowsWithAthDrawdown[0];
   const scatterXDomain = buildZeroDomain(scatterRows.map((row) => row.x));
   const scatterYDomain = buildZeroDomain(scatterRows.map((row) => row.y));
@@ -275,39 +438,88 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
         title="30D Performance"
         subtitle="Which assets are gaining or losing momentum?"
         action={
-          strongest ? (
-            <Badge tone={strongest.change30D >= 0 ? "green" : "red"}>
-              Best: {strongest.asset} {formatChartPercent(strongest.change30D, { signed: true })}
-            </Badge>
-          ) : null
+          <div className="flex flex-col items-end gap-1.5">
+            <CompactViewSelector
+              value={performanceView}
+              onChange={setPerformanceView}
+              label="30D performance view"
+              options={[
+                { value: "top", label: "Top" },
+                { value: "bottom", label: "Bottom" },
+                { value: "all", label: "All" },
+              ]}
+            />
+            {performanceSummary ? (
+              <Badge tone={performanceSummary.change30D >= 0 ? "green" : "red"}>
+                {performanceView === "bottom" ? "Worst" : "Best"}: {performanceSummary.asset}{" "}
+                {formatChartPercent(performanceSummary.change30D, { signed: true })}
+              </Badge>
+            ) : null}
+          </div>
         }
       >
-        <div className="h-64">
-          <p className="terminal-label mb-1">Top performers</p>
-          <RankedBarList data={topPerformanceData} height={104} maxMagnitude={performanceMaxMagnitude} />
-          <p className="terminal-label mb-1 mt-2">Bottom performers</p>
-          <RankedBarList data={bottomPerformanceData} height={104} maxMagnitude={performanceMaxMagnitude} />
+        <div className="flex h-56 flex-col">
+          <p className="terminal-label mb-1">{performanceSectionLabel}</p>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <RankedBarList
+              data={performanceData}
+              height={Math.max(196, performanceData.length * 24)}
+              maxMagnitude={performanceMaxMagnitude}
+            />
+          </div>
         </div>
       </ChartPanel>
 
       <ChartPanel
-        title="Distance from ATH"
-        subtitle="Which assets remain furthest below their peak?"
+        title="Drawdown & Recovery"
+        subtitle="How far each asset is below its peak and how strongly it has rebounded from its 90D low."
+        headerClassName="px-4 py-3"
+        bodyClassName="px-4 py-3"
         action={
-          weakestAth ? (
-            <Badge tone="red">
-              Worst: {weakestAth.asset} {formatChartPercent(weakestAth.athDrawdownResolved, { signed: true })}
-            </Badge>
-          ) : null
+          <div className="flex flex-col items-end gap-1.5">
+            <CompactViewSelector
+              value={drawdownView}
+              onChange={setDrawdownView}
+              label="Drawdown and recovery view"
+              options={[
+                { value: "worst", label: "Worst" },
+                { value: "recovery", label: "Recovery" },
+                { value: "all", label: "All" },
+              ]}
+            />
+            {drawdownView === "worst" && weakestAth ? (
+              <Badge tone="red">
+                Worst: {weakestAth.asset} {formatChartPercent(weakestAth.athDrawdownResolved, { signed: true })}
+              </Badge>
+            ) : strongestRecovery ? (
+              <Badge tone="green">
+                Recovery: {strongestRecovery.asset} {formatChartPercent(strongestRecovery.recovery90D, { signed: true })}
+              </Badge>
+            ) : null}
+          </div>
         }
       >
-        <RankedBarList data={athDrawdownData} height={256} maxMagnitude={athMaxMagnitude} />
+        <DrawdownRecoveryList data={drawdownRecoveryData} />
       </ChartPanel>
 
-      <ChartPanel title="Momentum vs Entry" subtitle="Which positions are recovering relative to your buy price?">
-        <div className="h-64">
+      <ChartPanel
+        title="Momentum vs Entry"
+        subtitle="Which positions are recovering relative to your buy price?"
+        headerClassName="px-4 py-3"
+        bodyClassName="px-3 py-3"
+      >
+        <div className="relative h-60">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-0 text-[8px] font-medium uppercase tracking-[0.08em]"
+          >
+            <span className="absolute left-[68px] top-5 text-emerald-300/45">Recovery Candidates</span>
+            <span className="absolute right-6 top-5 text-blue-300/45">Leaders</span>
+            <span className="absolute bottom-[48px] left-14 text-[7px] text-rose-300/30">Weak / Falling</span>
+            <span className="absolute bottom-[48px] right-3.5 text-[7px] text-amber-300/30">Watch</span>
+          </div>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 18, right: 16, bottom: 24, left: 14 }}>
+            <ScatterChart margin={{ top: 12, right: 8, bottom: 18, left: 6 }}>
               <CartesianGrid stroke="#1e2630" strokeDasharray="3 3" />
               <ReferenceArea
                 x1={scatterXDomain[0]}
@@ -316,7 +528,6 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
                 y2={scatterYDomain[1]}
                 fill={POSITIVE_COLOR}
                 fillOpacity={0.035}
-                label={{ value: quadrantLabels.recovery, position: "insideTopLeft", fill: "#6EE7B7", fontSize: 9 }}
               />
               <ReferenceArea
                 x1={0}
@@ -325,7 +536,6 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
                 y2={scatterYDomain[1]}
                 fill={ACCENT_COLOR}
                 fillOpacity={0.035}
-                label={{ value: quadrantLabels.leaders, position: "insideTopRight", fill: "#9AB1FF", fontSize: 9 }}
               />
               <ReferenceArea
                 x1={scatterXDomain[0]}
@@ -334,7 +544,6 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
                 y2={0}
                 fill={NEGATIVE_COLOR}
                 fillOpacity={0.03}
-                label={{ value: quadrantLabels.weak, position: "insideBottomLeft", fill: "#FDA4AF", fontSize: 9 }}
               />
               <ReferenceArea
                 x1={0}
@@ -343,10 +552,9 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
                 y2={0}
                 fill={WATCH_COLOR}
                 fillOpacity={0.025}
-                label={{ value: quadrantLabels.watch, position: "insideBottomRight", fill: "#FCD34D", fontSize: 9 }}
               />
-              <ReferenceLine x={0} stroke="#64748B" strokeWidth={1.2} />
-              <ReferenceLine y={0} stroke="#64748B" strokeWidth={1.2} />
+              <ReferenceLine x={0} stroke="#7C8BA1" strokeOpacity={0.85} strokeWidth={1.5} />
+              <ReferenceLine y={0} stroke="#7C8BA1" strokeOpacity={0.85} strokeWidth={1.5} />
               <XAxis
                 dataKey="x"
                 name="Distance from Avg Buy"
@@ -366,7 +574,7 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
                 domain={scatterYDomain}
                 tickFormatter={(value) => formatChartPercent(Number(value))}
                 tickCount={5}
-                width={48}
+                width={44}
                 tick={{ fill: "#8A97A8", fontSize: 9 }}
                 axisLine={false}
                 tickLine={false}
@@ -374,7 +582,14 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
               />
               <Tooltip cursor={{ strokeDasharray: "3 3" }} content={<ScatterPercentTooltip />} />
               <Scatter data={labeledScatterRows} shape="circle">
-                <LabelList dataKey="label" position="top" offset={8} className="fill-slate-300 text-[9px]" />
+                <LabelList dataKey="recoveryLabel" position="right" offset={10} className="fill-slate-300 text-[9px]" />
+                <LabelList dataKey="leaderLabel" position="left" offset={10} className="fill-slate-300 text-[9px]" />
+                <LabelList
+                  dataKey="weakestLabel"
+                  position={weakestMomentum?.quadrant === "weak" ? "top" : "left"}
+                  offset={14}
+                  className="fill-slate-300 text-[9px]"
+                />
                 {labeledScatterRows.map((row) => (
                   <Cell key={row.key} fill={quadrantColors[row.quadrant]} stroke="#0f141b" strokeWidth={1.5} />
                 ))}
@@ -382,7 +597,7 @@ export const PerformanceCharts = ({ rows }: { rows: PerformanceDisplayRow[] }) =
             </ScatterChart>
           </ResponsiveContainer>
         </div>
-        <p className={`tabular mt-2 text-xs ${recoveryCandidate ? "text-emerald-300" : "text-slate-500"}`}>
+        <p className={`tabular mt-1 text-xs leading-4 ${recoveryCandidate ? "text-emerald-300" : "text-slate-500"}`}>
           Strongest recovery candidate: {recoveryCandidate?.asset ?? "n/a"}
         </p>
       </ChartPanel>

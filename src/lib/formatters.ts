@@ -42,6 +42,22 @@ export const formatChartPercent = (
   })}%`;
 };
 
+export const formatChartPrice = (
+  value: number | null | undefined,
+  quote: string | null | undefined,
+) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
+
+  const absoluteValue = Math.abs(value);
+  const maximumFractionDigits = absoluteValue >= 1_000 ? 2 : absoluteValue >= 1 ? 4 : 6;
+  const formattedValue = value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits,
+  });
+
+  return quote ? `${formattedValue} ${quote}` : formattedValue;
+};
+
 export const formatCompact = (value: number | null | undefined) => {
   if (value === null || value === undefined) return "n/a";
   return Intl.NumberFormat("en-US", {

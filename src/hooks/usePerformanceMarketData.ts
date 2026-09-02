@@ -23,6 +23,7 @@ export type PerformanceDisplayRow = CoinPerformanceRow & {
   athResolved: number | null;
   athDateResolved: string | null;
   athDrawdownResolved: number | null;
+  low90DResolved: number | null;
 };
 
 type PerformanceRangeSnapshot = {
@@ -32,6 +33,7 @@ type PerformanceRangeSnapshot = {
   change1Y: number | null;
   high30D: number | null;
   low30D: number | null;
+  low90D: number | null;
   range30DPct: number | null;
   high1Y: number | null;
   drawdown1YPct: number | null;
@@ -110,6 +112,7 @@ const createEmptyRangeSnapshot = (): PerformanceRangeSnapshot => ({
   change1Y: null,
   high30D: null,
   low30D: null,
+  low90D: null,
   range30DPct: null,
   high1Y: null,
   drawdown1YPct: null,
@@ -151,6 +154,7 @@ export const usePerformanceMarketData = (
           athResolved: row.ath,
           athDateResolved: row.athDate,
           athDrawdownResolved: row.athDrawdownPct,
+          low90DResolved: null,
         };
       }),
     [assetLookup, performanceRows],
@@ -301,6 +305,7 @@ export const usePerformanceMarketData = (
               change1Y: stats1Y.changePct,
               high30D: stats30D.high,
               low30D: stats30D.low,
+              low90D: stats90D.low,
               range30DPct:
                 stats30D.high !== null && stats30D.low !== null && stats30D.low > 0
                   ? ((stats30D.high - stats30D.low) / stats30D.low) * 100
@@ -365,6 +370,7 @@ export const usePerformanceMarketData = (
           athResolved,
           athDateResolved,
           athDrawdownResolved,
+          low90DResolved: rangeSnapshot?.low90D ?? null,
           high30D: rangeSnapshot?.high30D ?? row.high30D,
           low30D: rangeSnapshot?.low30D ?? row.low30D,
           range30DPct: rangeSnapshot?.range30DPct ?? row.range30DPct,
