@@ -818,13 +818,34 @@ const derivePortfolioAssets = (records: ImportedTransactionRecord[]): PortfolioA
 
     return roundTo(Math.max(quantityToRemove - quantityRemoved, 0));
   };
-  const removeAcrossAssetAggregates = (asset: string, quantityToRemove: number) => {
+  const removeAcrossAssetAggregates = (
+    asset: string,
+    quantityToRemove: number,
+    preferredQuote?: string,
+  ) => {
     if (quantityToRemove <= FLOATING_POINT_EPSILON) {
       return;
     }
 
     let remainingQuantity = quantityToRemove;
-    const matchingAggregates = Array.from(aggregates.values()).filter((aggregate) => aggregate.asset === asset);
+    const normalizedAsset = asset.toUpperCase();
+    const normalizedPreferredQuote = preferredQuote?.toUpperCase();
+    const matchingAggregates = Array.from(aggregates.values())
+      .filter(
+        (aggregate) =>
+          aggregate.asset.toUpperCase() === normalizedAsset &&
+          aggregate.quantityHeld > FLOATING_POINT_EPSILON,
+      )
+      .sort((left, right) => {
+        if (!normalizedPreferredQuote) {
+          return 0;
+        }
+
+        const leftIsPreferred = left.quote.toUpperCase() === normalizedPreferredQuote;
+        const rightIsPreferred = right.quote.toUpperCase() === normalizedPreferredQuote;
+
+        return Number(rightIsPreferred) - Number(leftIsPreferred);
+      });
 
     matchingAggregates.forEach((aggregate) => {
       if (remainingQuantity <= FLOATING_POINT_EPSILON) {
@@ -910,7 +931,10 @@ const derivePortfolioAssets = (records: ImportedTransactionRecord[]): PortfolioA
         return;
       }
 
-      removeAggregateQuantity(getOrCreateAggregate(asset, quote), netQuantity > 0 ? netQuantity : quantity, 1);
+      // Crypto holdings are fungible across quote currencies. A position bought in EUR can
+      // therefore be sold against USD; prefer the matching quote bucket, then consume any
+      // remaining quantity from the asset's other quote buckets.
+      removeAcrossAssetAggregates(asset, netQuantity > 0 ? netQuantity : quantity, quote);
       addAggregateQuantity(quote, quote, netValue, netValue, 1);
       return;
     }

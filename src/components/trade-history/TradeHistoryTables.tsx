@@ -24,7 +24,16 @@ const formatDate = (value: string) => {
 
   return Number.isNaN(parsed.getTime())
     ? value
-    : parsed.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+    : `${String(parsed.getUTCDate()).padStart(2, "0")}.${String(parsed.getUTCMonth() + 1).padStart(2, "0")}.${parsed.getUTCFullYear()}`;
+};
+
+const getClosedTradeBuyDates = (trade: ClosedTrade) =>
+  Array.from(new Set(trade.matches.map((match) => match.buyDate).filter(Boolean))).sort();
+
+const formatClosedTradeBuyDates = (trade: ClosedTrade) => {
+  const dates = getClosedTradeBuyDates(trade);
+
+  return dates.length ? dates.map(formatDate).join("; ") : "n/a";
 };
 
 export const ClosedTradesTable = ({ rows, toolbarControls }: { rows: ClosedTrade[]; toolbarControls?: ReactNode }) => {
@@ -40,7 +49,29 @@ export const ClosedTradesTable = ({ rows, toolbarControls }: { rows: ClosedTrade
         ),
       },
       { accessorKey: "quote", header: "Quote" },
-      { accessorKey: "sellDate", header: "Sold", cell: (info) => formatDate(info.getValue<string>()) },
+      {
+        id: "buyDate",
+        accessorFn: (row) => getClosedTradeBuyDates(row)[0] ?? "",
+        header: "Buy Date",
+        cell: (info) => {
+          const dates = getClosedTradeBuyDates(info.row.original);
+
+          if (!dates.length) {
+            return <span className="text-slate-500">n/a</span>;
+          }
+
+          return (
+            <span
+              className="whitespace-nowrap"
+              title={dates.map((date) => formatDate(date)).join(", ")}
+            >
+              {formatDate(dates[0])}
+              {dates.length > 1 ? <span className="ml-1 text-slate-500">+{dates.length - 1}</span> : null}
+            </span>
+          );
+        },
+      },
+      { accessorKey: "sellDate", header: "Sell Date", cell: (info) => formatDate(info.getValue<string>()) },
       {
         accessorKey: "amount",
         header: "Amount",
@@ -98,7 +129,8 @@ export const ClosedTradesTable = ({ rows, toolbarControls }: { rows: ClosedTrade
           columns: [
             { header: "Asset", value: (row) => row.asset },
             { header: "Quote", value: (row) => row.quote },
-            { header: "Sold", value: (row) => row.sellDate },
+            { header: "Buy Date", value: formatClosedTradeBuyDates },
+            { header: "Sell Date", value: (row) => formatDate(row.sellDate) },
             { header: "Amount", value: (row) => row.amount },
             { header: "FIFO Cost", value: (row) => row.averageCost },
             { header: "Sell Price", value: (row) => row.sellPrice },
@@ -129,7 +161,7 @@ export const OpenLotsTable = ({ rows, toolbarControls }: { rows: OpenLot[]; tool
         ),
       },
       { accessorKey: "quote", header: "Quote" },
-      { accessorKey: "buyDate", header: "Bought", cell: (info) => formatDate(info.getValue<string>()) },
+      { accessorKey: "buyDate", header: "Buy Date", cell: (info) => formatDate(info.getValue<string>()) },
       {
         accessorKey: "originalQuantity",
         header: "Original",
@@ -190,7 +222,7 @@ export const OpenLotsTable = ({ rows, toolbarControls }: { rows: OpenLot[]; tool
         columns: [
           { header: "Asset", value: (row) => row.asset },
           { header: "Quote", value: (row) => row.quote },
-          { header: "Bought", value: (row) => row.buyDate },
+          { header: "Buy Date", value: (row) => formatDate(row.buyDate) },
           { header: "Original", value: (row) => row.originalQuantity },
           { header: "Remaining", value: (row) => row.remainingQuantity },
           { header: "Buy Price", value: (row) => row.buyPrice },
