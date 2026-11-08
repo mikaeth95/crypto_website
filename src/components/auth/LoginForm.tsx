@@ -5,6 +5,14 @@ import { Input } from "../ui/input";
 const submitButtonClassName =
   "button-primary h-10 w-full justify-center";
 
+/**
+ * Einheitliche Meldung für jeden fehlgeschlagenen Anmeldeversuch. Würde die
+ * Oberfläche zwischen "unbekannte E-Mail", "falsches Passwort" oder "nicht
+ * bestätigt" unterscheiden, ließe sich ableiten, ob eine Adresse registriert ist.
+ */
+const LOGIN_FAILED_MESSAGE =
+  "Login failed. Please check your email address and password and try again.";
+
 export const LoginForm = () => {
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
@@ -17,13 +25,17 @@ export const LoginForm = () => {
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    const { error } = await signIn({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const { error } = await signIn({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      setErrorMessage(error.message);
+      if (error) {
+        setErrorMessage(LOGIN_FAILED_MESSAGE);
+      }
+    } catch {
+      setErrorMessage(LOGIN_FAILED_MESSAGE);
     }
 
     setIsSubmitting(false);

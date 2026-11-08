@@ -7,3 +7,13 @@
   to = "/index.html"
   status = 200
 
+# Antwortköpfe für alle Seiten.
+# Strict-Transport-Security zwingt Browser, die Seite ein Jahr lang nur über
+# HTTPS aufzurufen. nosniff verhindert, dass der Browser Dateitypen errät.
+# Die Referrer-Policy gibt an fremde Seiten nur den Ursprung weiter, keine Pfade.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

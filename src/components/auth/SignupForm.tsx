@@ -5,6 +5,13 @@ import { Input } from "../ui/input";
 const submitButtonClassName =
   "button-primary h-10 w-full justify-center";
 
+/**
+ * Mindestlänge des Passworts laut Pflichtenheft. Die Prüfung im Browser ist nur
+ * Bedienerführung. Verbindlich ist dieselbe Regel in den Supabase-Auth-
+ * Einstellungen (Minimum password length), siehe README.
+ */
+const MIN_PASSWORD_LENGTH = 8;
+
 export const SignupForm = () => {
   const { signUp } = useAuth();
   const [displayName, setDisplayName] = useState("");
@@ -19,6 +26,11 @@ export const SignupForm = () => {
     event.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setErrorMessage(`The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`);
+      return;
+    }
 
     if (password !== confirmPassword) {
       setErrorMessage("Passwords do not match.");
@@ -80,8 +92,23 @@ export const SignupForm = () => {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           placeholder="Create a password"
+          minLength={MIN_PASSWORD_LENGTH}
+          aria-describedby="signup-password-hint"
           required
         />
+        <span
+          id="signup-password-hint"
+          className={
+            password.length > 0 && password.length < MIN_PASSWORD_LENGTH
+              ? "block text-xs text-amber-300"
+              : "block text-xs text-slate-500"
+          }
+        >
+          At least {MIN_PASSWORD_LENGTH} characters
+          {password.length > 0 && password.length < MIN_PASSWORD_LENGTH
+            ? ` (${password.length}/${MIN_PASSWORD_LENGTH})`
+            : ""}
+        </span>
       </label>
 
       <label className="block space-y-2">
