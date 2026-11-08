@@ -147,7 +147,7 @@ create table if not exists public.imported_transactions (
 -- ---------------------------------------------------------------------
 -- Indizes
 -- ---------------------------------------------------------------------
-create index if not exists represented_accounts_owner_idx
+create index if not exists represented_accounts_owner_user_id_idx
   on public.represented_accounts (owner_user_id);
 
 create index if not exists user_preferences_selected_preset_id_idx
@@ -156,13 +156,13 @@ create index if not exists user_preferences_selected_preset_id_idx
 create index if not exists user_preferences_selected_represented_account_id_idx
   on public.user_preferences (selected_represented_account_id);
 
-create index if not exists imported_transactions_account_idx
+create index if not exists imported_transactions_account_id_idx
   on public.imported_transactions (represented_account_id);
 
 create index if not exists imported_transactions_occurred_at_idx
   on public.imported_transactions (occurred_at desc);
 
-create index if not exists import_history_files_account_idx
+create index if not exists import_history_files_account_id_idx
   on public.import_history_files (represented_account_id);
 
 create index if not exists import_history_files_imported_at_idx

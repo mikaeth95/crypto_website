@@ -104,7 +104,11 @@ alter table public.live_chart_presets
   drop column assets;
 
 -- ---------------------------------------------------------------------
--- F. Neue Eindeutigkeitsschlüssel und Indizes
+-- F. Neue Eindeutigkeitsschlüssel
+-- Neue Indizes sind nicht nötig: Die Indizes auf represented_account_id und
+-- represented_accounts.owner_user_id bestehen bereits. Die Indizes auf den
+-- entfallenen owner_user_id-Spalten hat PostgreSQL in Schritt E mit der
+-- Spalte entfernt.
 -- ---------------------------------------------------------------------
 alter table public.imported_transactions
   add constraint imported_transactions_account_external_key
@@ -117,13 +121,6 @@ alter table public.import_history_files
 alter table public.live_chart_presets
   add constraint live_chart_presets_account_name_key
   unique (represented_account_id, name);
-
-create index if not exists represented_accounts_owner_idx
-  on public.represented_accounts (owner_user_id);
-create index if not exists imported_transactions_account_idx
-  on public.imported_transactions (represented_account_id);
-create index if not exists import_history_files_account_idx
-  on public.import_history_files (represented_account_id);
 
 -- ---------------------------------------------------------------------
 -- G. Zugriffsregeln neu. Der Eigentümer wird über das Konto geprüft.
