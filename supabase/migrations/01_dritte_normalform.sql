@@ -239,6 +239,13 @@ create policy user_preferences_delete_own on public.user_preferences
 -- Diese Prüfungen sind im Pflichtenheft zugesagt und fehlten bisher.
 -- Gibt es bereits Zeilen, die sie verletzen, bricht das Skript hier ab.
 -- ---------------------------------------------------------------------
+
+-- Anzeigename auf 60 Zeichen kuerzen, damit die Pruefung weiter unten
+-- bestehende Zeilen nicht ablehnt.
+update public.profiles
+set display_name = left(display_name, 60)
+where char_length(display_name) > 60;
+
 alter table public.profiles
   add constraint profiles_display_name_len
   check (display_name is null or char_length(display_name) <= 60);
@@ -248,5 +255,59 @@ alter table public.imported_transactions
   check (coalesce(quantity, 0) >= 0
      and coalesce(execution_price, 0) >= 0
      and coalesce(fee, 0) >= 0);
+
+-- ---------------------------------------------------------------------
+-- I. Registrierung an die Längenprüfung anpassen
+-- handle_new_user übernimmt den Anzeigenamen aus den Metadaten oder aus dem
+-- Teil der E-Mail vor dem @. Ohne Kürzung würde die Prüfung aus Schritt H
+-- bei einem längeren Namen die gesamte Registrierung abbrechen.
+-- Gleiche Fassung wie in schema.sql.
+-- ---------------------------------------------------------------------
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  default_account_id uuid;
+begin
+  insert into public.profiles (id, display_name)
+  values (
+    new.id,
+    left(coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)), 60)
+  )
+  on conflict (id) do nothing;
+
+  insert into public.represented_accounts (owner_user_id, name, provider, base_currency)
+  values (new.id, 'All', 'all', 'EUR')
+  on conflict (owner_user_id, provider, name)
+  do update
+    set base_currency = excluded.base_currency,
+        updated_at = timezone('utc', now())
+  returning id into default_account_id;
+
+  if default_account_id is null then
+    select id
+    into default_account_id
+    from public.represented_accounts
+    where owner_user_id = new.id
+      and provider = 'all'
+      and name = 'All'
+    limit 1;
+  end if;
+
+  insert into public.user_preferences (
+    owner_user_id,
+    selected_preset_id,
+    selected_timeframe,
+    selected_represented_account_id
+  )
+  values (new.id, null, '1h', default_account_id)
+  on conflict (owner_user_id) do nothing;
+
+  return new;
+end;
+$$;
 
 commit;

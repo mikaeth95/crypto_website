@@ -293,7 +293,8 @@ create trigger profiles_protect_role
 -- Neue Profile bekommen über den Spaltenstandard immer die Rolle user.
 -- Der Anzeigename wird auf 60 Zeichen gekürzt, sonst würde die Prüfung
 -- profiles_display_name_len die gesamte Registrierung abbrechen.
--- (Diese Kürzung ist nicht Teil der Migrationsskripte, siehe README.)
+-- Bestehende Datenbanken erhalten diese Fassung über Schritt I von
+-- 01_dritte_normalform.sql.
 -- ---------------------------------------------------------------------
 create or replace function public.handle_new_user()
 returns trigger

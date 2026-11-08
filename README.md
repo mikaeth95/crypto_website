@@ -53,7 +53,7 @@ select count(*) filter (where import_file_id is null) as ohne_datei,
 from public.imported_transactions;
 ```
 
-Hinweis: In `schema.sql` kürzt die Registrierungsfunktion `handle_new_user` den Anzeigenamen auf 60 Zeichen, passend zur neuen Prüfung `profiles_display_name_len`. Die Migrationsskripte ändern diese Funktion nicht. Für bestehende Datenbanken die Funktion `handle_new_user` aus `schema.sql` zusätzlich einmal ausführen, sonst schlägt eine Registrierung mit überlangem Namen fehl.
+Hinweis: Skript 1 kürzt bestehende Anzeigenamen auf 60 Zeichen und ersetzt die Registrierungsfunktion `handle_new_user` durch eine Fassung, die neue Namen ebenfalls kürzt. Das passt zur neuen Prüfung `profiles_display_name_len`. Ein separater Handgriff ist dafür nicht nötig.
 
 ### Ersten Administrator setzen
 
