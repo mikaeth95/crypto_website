@@ -6,6 +6,7 @@ import { Card } from "./components/ui/card";
 import { PageHeader } from "./components/ui/page-header";
 import { UserDataProvider } from "./context/UserDataContext";
 import { useAppData } from "./hooks/useAppData";
+import { AdminPage } from "./pages/AdminPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LiveChartsPage } from "./pages/LiveChartsPage";
@@ -50,6 +51,11 @@ const ProtectedDashboardRoutes = () => {
         <Route path="/live-charts/markets/:marketSymbol" element={<LiveChartsPage data={data} />} />
         <Route path="/live-charts/preset/:presetTabName/:presetSlug" element={<LiveChartsPage data={data} />} />
         <Route path="/live-charts/:presetSlug" element={<LiveChartsPage data={data} />} />
+        {/* Rollenprüfung nur als Bedienerführung. Der Schutz der Daten liegt in
+            den Zugriffsregeln der Datenbank (is_admin, admin_user_overview). */}
+        <Route element={<ProtectedRoute requiredRole="admin" />}>
+          <Route path="/admin" element={<AdminPage />} />
+        </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </DashboardLayout>

@@ -8,11 +8,13 @@ import {
   MoreHorizontal,
   ReceiptText,
   Search,
+  ShieldCheck,
   TrendingUp,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useUserData } from "../../hooks/useUserData";
 import { cn } from "../../lib/utils";
 
 const primaryItems = [
@@ -22,13 +24,16 @@ const primaryItems = [
   { to: "/transactions", label: "Transactions", icon: ReceiptText },
 ];
 
-const secondaryItems = [
+const baseSecondaryItems = [
   { to: "/performance", label: "Performance", icon: BarChart3 },
   { to: "/markets", label: "Markets", icon: Search },
   { to: "/live-charts", label: "Charts", icon: TrendingUp },
 ];
 
-const allItems = [...primaryItems, ...secondaryItems];
+// Nur für Administratoren sichtbar. Das Ausblenden ist reine Bedienerführung:
+// Wer /admin direkt aufruft, wird von ProtectedRoute umgeleitet, und die
+// Datenbank liefert Nicht-Administratoren ohnehin keine Daten (is_admin()).
+const adminItem = { to: "/admin", label: "Administration", icon: ShieldCheck };
 
 const isPathActive = (pathname: string, target: string) =>
   target === "/dashboard" ? pathname === target : pathname === target || pathname.startsWith(`${target}/`);
@@ -51,6 +56,12 @@ export const AppNavigation = () => {
   const navigationRef = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const { isAdmin } = useUserData();
+  const secondaryItems = useMemo(
+    () => (isAdmin ? [...baseSecondaryItems, adminItem] : baseSecondaryItems),
+    [isAdmin],
+  );
+  const allItems = useMemo(() => [...primaryItems, ...secondaryItems], [secondaryItems]);
   const hasSecondaryActiveItem = secondaryItems.some((item) => isPathActive(location.pathname, item.to));
 
   useEffect(() => {
