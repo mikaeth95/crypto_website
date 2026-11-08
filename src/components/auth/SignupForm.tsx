@@ -69,6 +69,8 @@ export const SignupForm = () => {
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
           placeholder="Portfolio owner"
+          // Entspricht der Prüfung profiles_display_name_len in der Datenbank.
+          maxLength={60}
         />
       </label>
 
