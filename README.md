@@ -38,12 +38,51 @@ Nur für eine bestehende Datenbank. **Zuerst auf einer Kopie der Datenbank teste
 | 1 | `supabase/migrations/01_dritte_normalform.sql` | Bringt das Schema in die dritte Normalform: entfernt doppelt gespeicherte und transitiv abhängige Spalten, lagert die Handelspaare der Chart-Zusammenstellungen in `live_chart_preset_assets` aus, ersetzt den Dateinamen in Transaktionen durch den Fremdschlüssel `import_file_id` und stellt die Zugriffsregeln auf die Prüfung über das Börsenkonto um. |
 | 2 | `supabase/migrations/02_benutzerrollen.sql` | Führt die Rollen `user` und `admin` ein, mit Rollenschutz per Trigger, Zusatzrechten für Administratoren und der Funktion `admin_user_overview()`. |
 
-Vor Skript 1 prüfen, ob die Handelspaare als Textliste gespeichert sind:
+#### Prüfabfragen vor Skript 1
+
+Diese Abfragen müssen vor dem Einspielen von Skript 1 laufen. Sie ändern nichts an den Daten.
+
+**1. Format der Handelspaare**
 
 ```sql
 select assets from public.live_chart_presets limit 5;
 -- erwartet z. B. ["BTC_EUR","ETH_EUR"]
 ```
+
+Stehen dort Objekte wie `[{"symbol":"BTC_EUR"}]` statt Texten, findet Schritt B keine Handelspaare und muss vorher angepasst werden.
+
+**2. Überlange Anzeigenamen**
+
+```sql
+select count(*) from public.profiles where char_length(display_name) > 60;
+-- erwartet: 0
+```
+
+Ein Wert über 0 bricht das Skript nicht ab. Schritt H kürzt diese Namen aber auf 60 Zeichen, und die betroffenen Benutzer sollten davon wissen.
+
+**3. Negative Mengen, Preise oder Gebühren**
+
+```sql
+select count(*) from public.imported_transactions
+  where quantity < 0 or execution_price < 0 or fee < 0;
+-- erwartet: 0
+```
+
+Ein Wert über 0 lässt die Prüfung `imported_transactions_not_negative` in Schritt H scheitern, und das ganze Skript wird zurückgerollt. Die betroffenen Zeilen müssen vorher korrigiert werden.
+
+**4. Zusammenstellungen ohne Konto und ohne Sammelkonto "All"**
+
+```sql
+select count(*) from public.live_chart_presets p
+  where p.represented_account_id is null
+    and not exists (select 1 from public.represented_accounts ra
+                    where ra.owner_user_id = p.owner_user_id and ra.name = 'All');
+-- erwartet: 0
+```
+
+Ein Wert über 0 heißt, dass Schritt C diesen Zusammenstellungen kein Konto zuordnen kann. Dann scheitert `set not null` und das Skript wird zurückgerollt. Vorher das Konto "All" für den Benutzer anlegen oder die Zusammenstellungen löschen.
+
+#### Kontrollabfrage nach Skript 1
 
 Nach Skript 1 prüfen, wie viele Transaktionen keiner Importdatei zugeordnet werden konnten:
 
