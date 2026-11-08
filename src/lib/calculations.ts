@@ -1,3 +1,39 @@
+/**
+ * Kennzahlen für das Dashboard
+ *
+ * Zweck:
+ *   Verdichtet die Portfolio-Positionen zu den Übersichtskennzahlen des
+ *   Dashboards: Portfoliowert, investiertes Kapital, Gewinn/Verlust und
+ *   Performance – jeweils getrennt nach Quote-Währung (EUR, USD) und, sofern ein
+ *   Wechselkurs ableitbar ist, kombiniert in EUR bzw. USD. Zusätzlich einfache
+ *   Zählwerte (Anzahl Positionen, Gewinner/Verlierer, größte Position) und ein
+ *   Nachschlage-Index pro Asset.
+ *
+ * Eingaben:
+ *   - PortfolioAssetRow[]: eine Zeile pro Asset/Quote-Paar mit Bestand,
+ *     Durchschnittskaufpreis, investiertem Nettobetrag, aktuellem Kurs/Wert.
+ *   - CoinPerformanceRow[] und TransactionRow[] (nur für byAssetLookup bzw.
+ *     dashboardDerived).
+ *
+ * Ausgaben:
+ *   - deriveDashboardSummary: DashboardSummary (Beträge je Quote und kombiniert,
+ *     Performance als Anteil, z. B. 0.12 = 12 %; die Anzeige multipliziert mit 100).
+ *   - derivePortfolioSummary: PortfolioSummary (einfachere Variante, s. u.).
+ *   - dashboardDerived, byAssetLookup: Hilfsstrukturen für Karten/Tabellen.
+ *
+ * Annahmen:
+ *   - Nur Positionen mit Quote EUR oder USD fließen in die Summen ein; andere
+ *     Quotes (z. B. USDT, BTC) werden ignoriert.
+ *   - Fiat und Stablecoins (DASHBOARD_FIAT_ASSETS) zählen zum Portfoliowert,
+ *     aber nicht zu "investiert" und "Gewinn", weil Bargeld keine Investition ist.
+ *   - Der EUR/USD-Kurs wird aus einer USD|EUR- oder EUR|USD-Position im Portfolio
+ *     abgeleitet. Gibt es keine, enthalten die "combined"-Werte nur den Anteil der
+ *     jeweils eigenen Quote (keine Umrechnung).
+ *   - Fehlt ein aktueller Wert, wird ersatzweise Kurs × Bestand oder
+ *     Durchschnittskaufpreis × Bestand verwendet.
+ *   - Rundung nur auf 12 Nachkommastellen gegen Gleitkomma-Reste; nicht endliche
+ *     Werte werden zu null.
+ */
 import type {
   CoinPerformanceRow,
   PortfolioAssetRow,
@@ -5,9 +41,12 @@ import type {
   TransactionRow,
 } from "../types/portfolio";
 
+// Assets, die als Bargeld/Stablecoin gelten und nicht als Investition zählen.
 const DASHBOARD_FIAT_ASSETS = new Set(["EUR", "USD", "USDC", "USDT", "USDP", "DAI", "TUSD", "USDE"]);
 const DASHBOARD_FLOAT_EPSILON = 1e-9;
 
+// Ein Betrag in vier Sichten: je Quote (nur EUR- bzw. nur USD-Positionen) und
+// kombiniert (alle Positionen umgerechnet in EUR bzw. USD).
 export type DashboardMetricSummary = {
   combinedEUR: number | null;
   combinedUSD: number | null;
@@ -33,6 +72,9 @@ const coalesceMetricValue = (value: number): number | null =>
 
 const isFiatAsset = (asset: PortfolioAssetRow) => DASHBOARD_FIAT_ASSETS.has(asset.asset.toUpperCase());
 
+// Ermittelt den aktuellen Wert einer Position mit absteigender Verlässlichkeit:
+// gelieferter Wert -> Bestand (wenn Asset = Quote, z. B. EUR-Guthaben) ->
+// Kurs × Bestand -> Durchschnittskaufpreis × Bestand (Notlösung ohne Marktkurs).
 const resolveAssetCurrentValue = (asset: PortfolioAssetRow): number | null => {
   if (asset.currentValue !== null && asset.currentValue !== undefined && Number.isFinite(asset.currentValue)) {
     return asset.currentValue;
@@ -53,6 +95,9 @@ const resolveAssetCurrentValue = (asset: PortfolioAssetRow): number | null => {
   return null;
 };
 
+// Leitet den Kurs "EUR je 1 USD" aus dem Portfolio selbst ab, damit keine
+// externe Wechselkursquelle nötig ist: bevorzugt eine USD|EUR-Position
+// (Kurs direkt), sonst eine EUR|USD-Position (Kehrwert). Ohne solche Position: null.
 const inferEurPerUsdRate = (assets: PortfolioAssetRow[]): number | null => {
   const usdInEurAsset = assets.find(
     (asset) => asset.asset.toUpperCase() === "USD" && asset.quote.toUpperCase() === "EUR",
@@ -91,6 +136,9 @@ const inferEurPerUsdRate = (assets: PortfolioAssetRow[]): number | null => {
   return null;
 };
 
+// Baut aus den EUR- und USD-Teilsummen die vier Sichten. Ohne Wechselkurs
+// entsprechen die kombinierten Werte den reinen Quote-Summen (USD-Anteil fehlt
+// dann in combinedEUR und umgekehrt).
 const buildMetricSummary = (
   totals: { eur: number; usd: number },
   eurPerUsdRate: number | null,
@@ -115,6 +163,9 @@ const buildMetricSummary = (
   };
 };
 
+// Summiert eine Kennzahl getrennt nach Quote EUR/USD. "profit" wird bevorzugt
+// als aktueller Wert − investiert berechnet (konsistent mit resolveAssetCurrentValue),
+// sonst wird der gelieferte unrealisierte Gewinn übernommen.
 const accumulateTotalsByQuote = (
   assets: PortfolioAssetRow[],
   kind: "portfolio" | "invested" | "profit",
@@ -164,6 +215,9 @@ const accumulateTotalsByQuote = (
     { eur: 0, usd: 0 },
   );
 
+// Index pro Asset-Symbol (Großschreibung) mit Portfolio-Zeile, Performance-Zeile
+// und allen Transaktionen dieses Assets – für Detailansichten.
+// Hinweis: Schlüssel ist nur das Asset; bei mehreren Quotes überschreibt die letzte Zeile.
 export const byAssetLookup = (
   assets: PortfolioAssetRow[],
   performance: CoinPerformanceRow[],
@@ -199,6 +253,8 @@ export const byAssetLookup = (
   }, {});
 };
 
+// Einfache Zählwerte für das Dashboard. Die größte Position wird nach dem
+// Rohwert currentValue bestimmt, ohne Währungsumrechnung zwischen Quotes.
 export const dashboardDerived = (
   assets: PortfolioAssetRow[],
   transactions: TransactionRow[],
@@ -217,6 +273,9 @@ export const dashboardDerived = (
   };
 };
 
+// Einfache Gesamtsummen je Quote EUR/USD (ohne Fiat-Ausschluss, ohne Ersatzwerte
+// und ohne Wechselkurs). Performance als Anteil (Gewinn / investiert).
+// Hinweis: Wird derzeit im Code nicht aufgerufen; das Dashboard nutzt deriveDashboardSummary.
 export const derivePortfolioSummary = (
   assets: PortfolioAssetRow[],
 ): PortfolioSummary => {
@@ -262,6 +321,9 @@ export const derivePortfolioSummary = (
   return summary;
 };
 
+// Kennzahlen für die Übersichtskarten des Dashboards. Portfoliowert inkl. Fiat,
+// investiert und Gewinn ohne Fiat; Performance = Gewinn / investiert (Anteil),
+// jeweils kombiniert (EUR-Basis) sowie getrennt für EUR- und USD-Positionen.
 export const deriveDashboardSummary = (assets: PortfolioAssetRow[]): DashboardSummary => {
   const eurPerUsdRate = inferEurPerUsdRate(assets);
   const portfolioTotals = accumulateTotalsByQuote(assets, "portfolio");

@@ -1,3 +1,34 @@
+/**
+ * Einlesen der Excel-Arbeitsmappe (crypto_tracker.xlsx)
+ *
+ * Zweck:
+ *   Lädt die Tracker-Arbeitsmappe per HTTP und wandelt die drei Blätter
+ *   "Transaktionen", "Portfolio" und "Coin Performance" in die typisierten
+ *   Datenstrukturen des Dashboards um (statische Datenquelle aus der Zeit vor
+ *   bzw. neben dem Supabase-Backend; Aufruf über den Hook useWorkbookData, der
+ *   aktuell nirgends eingebunden ist).
+ *
+ * Eingaben:
+ *   - path: URL/Pfad zur .xlsx-Datei (Standard: WORKBOOK_PATH "/data/crypto_tracker.xlsx").
+ *   - Blattnamen aus SHEETS; Spalten werden über feste Positionen gelesen.
+ *
+ * Ausgaben:
+ *   WorkbookData mit Summary, Portfolio-Positionen, Transaktionen, Performance-
+ *   Zeilen sowie einer Liste von Fehlermeldungen für fehlende Blätter.
+ *
+ * Annahmen:
+ *   - Feste Spaltenreihenfolge je Blatt (keine Erkennung über Überschriften,
+ *     außer der Kopfzeile "Asset" im Portfolio-Blatt).
+ *   - Die Summary steht oberhalb der Tabelle im Portfolio-Blatt; Spalte B = EUR,
+ *     Spalte C = USD, gefunden über Textbausteine wie "Gesamt Investiert".
+ *   - Zeilen ohne Asset (bzw. ohne Datum und Asset) werden übersprungen.
+ *   - Zahlen werden mit parseLocalizedNumber gelesen; für die Anzeige bleibt der
+ *     Originaltext (…Display) erhalten.
+ *   - Fehlende Blätter führen nicht zum Abbruch, sondern zu leeren Listen und
+ *     einem Eintrag in errors; nur ein fehlgeschlagener Download wirft einen Fehler.
+ *   - Felder, die es nur im Supabase-Import gibt (orderId, tradeId, journalIds …),
+ *     werden leer belegt.
+ */
 import * as XLSX from "xlsx";
 import { SHEETS } from "./constants";
 import {
@@ -13,6 +44,7 @@ import type {
   WorkbookData,
 } from "../types/portfolio";
 
+// Blatt als Array von Zeilen (Array von Zellen) mit Rohwerten; leere Zellen = "".
 const toRows = (sheet: XLSX.WorkSheet) =>
   XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
     header: 1,
@@ -20,6 +52,7 @@ const toRows = (sheet: XLSX.WorkSheet) =>
     raw: true,
   });
 
+// Liest den Summary-Block über Textsuche in Spalte A (erste passende Zeile gewinnt).
 const parseSummary = (rows: (string | number)[][]): PortfolioSummary => {
   const find = (label: string) => rows.find((r) => String(r[0]).includes(label));
   const totalPortfolio = find("Gesamt Portfolio Wert");
@@ -39,6 +72,8 @@ const parseSummary = (rows: (string | number)[][]): PortfolioSummary => {
   };
 };
 
+// Portfolio-Blatt: Summary oben, darunter die Positionstabelle ab der Kopfzeile "Asset".
+// Ohne Kopfzeile gibt es nur die Summary und keine Positionen.
 const parsePortfolio = (sheet: XLSX.WorkSheet): {
   summary: PortfolioSummary;
   assets: PortfolioAssetRow[];
@@ -84,6 +119,8 @@ const parsePortfolio = (sheet: XLSX.WorkSheet): {
   return { summary, assets };
 };
 
+// Transaktionsblatt: erste Zeile ist Kopfzeile. Zahlenfelder bleiben Strings,
+// weil TransactionRow sie (wie beim Supabase-Import) als Text führt.
 const parseTransactions = (sheet: XLSX.WorkSheet): TransactionRow[] => {
   const rows = toRows(sheet);
   const dataRows = rows.slice(1).filter((r) => String(r[0]).trim() || String(r[2]).trim());
@@ -115,6 +152,9 @@ const parsePerformance = (sheet: XLSX.WorkSheet): CoinPerformanceRow[] => {
   const dataRows = rows.slice(1).filter((r) => String(r[0]).trim());
 
   return dataRows.map((row) => {
+    // Heuristik für Zeilen ohne ATH-Datum: Ist Spalte D kein Datum, sondern eine
+    // Zahl (und Spalte E leer oder klein), fehlt die Datumsspalte und alle
+    // folgenden Spalten sind um eine Position nach links verschoben.
     const athDateCandidate = safeDate(row[3]);
     const shifted =
       athDateCandidate === null &&
@@ -123,6 +163,8 @@ const parsePerformance = (sheet: XLSX.WorkSheet): CoinPerformanceRow[] => {
 
     const idx = (normalIndex: number) => (shifted ? normalIndex - 1 : normalIndex);
 
+    // CoinMarketCap-Link: Position nicht fest, daher in allen Zellen nach
+    // "cmc"-Beschriftung bzw. einer http(s)-URL suchen.
     const stringCells = row.map((c) => String(c ?? "").trim()).filter(Boolean);
     const label = stringCells.find((v) => v.toLowerCase().includes("cmc")) ?? null;
     const possibleUrl = stringCells.find((v) => /^https?:\/\//i.test(v)) ?? null;
@@ -153,6 +195,8 @@ const parsePerformance = (sheet: XLSX.WorkSheet): CoinPerformanceRow[] => {
   });
 };
 
+// Einstiegspunkt: Arbeitsmappe laden und alle Blätter parsen. Fehlende Blätter
+// werden gesammelt statt geworfen, damit das Dashboard Teildaten anzeigen kann.
 export const loadWorkbookData = async (path: string): Promise<WorkbookData> => {
   const errors: string[] = [];
   const response = await fetch(path);
@@ -182,6 +226,8 @@ export const loadWorkbookData = async (path: string): Promise<WorkbookData> => {
   };
 };
 
+// Platzhalter, falls das Portfolio-Blatt fehlt (wird erst zur Laufzeit von
+// loadWorkbookData gelesen, daher ist die Definition nach der Funktion unkritisch).
 const emptySummary: PortfolioSummary = {
   totalPortfolioValueEUR: null,
   totalPortfolioValueUSD: null,
