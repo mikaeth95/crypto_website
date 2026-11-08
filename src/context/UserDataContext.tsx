@@ -1,3 +1,34 @@
+/**
+ * Benutzerbezogene Stammdaten und Einstellungen.
+ *
+ * Zweck:
+ *   Lädt Profil (inklusive Rolle), Börsenkonten, Chart-Zusammenstellungen und
+ *   Einstellungen des angemeldeten Benutzers und stellt sie der Oberfläche
+ *   bereit. Verwaltet außerdem das Anlegen, Ändern und Löschen von
+ *   Chart-Zusammenstellungen.
+ *
+ * Eingaben:
+ *   - Angemeldeter Benutzer (AuthContext).
+ *   - Tabellen profiles, represented_accounts, live_chart_presets,
+ *     live_chart_preset_assets und user_preferences.
+ *
+ * Ausgaben:
+ *   - profile und role: Die Rolle steuert nur die Bedienerführung (Menüpunkt
+ *     "Administration", Routenprüfung). Der Schutz liegt in der Datenbank.
+ *   - liveChartPresets: Zusammenstellungen im bisherigen Oberflächenformat
+ *     (name, assets in fester Reihenfolge, provider).
+ *
+ * Annahmen:
+ *   - Jede Zusammenstellung gehört zu genau einem Börsenkonto
+ *     (represented_account_id ist nach der Migration Pflicht).
+ *   - Die Handelspaare liegen je Zeile in live_chart_preset_assets mit
+ *     position 1 bis 4. Die Reihenfolge der Oberfläche entspricht position.
+ *   - provider einer Zusammenstellung wird nicht mehr gespeichert, sondern aus
+ *     dem Börsenkonto abgeleitet. Für das Sammelkonto "All" (provider "all")
+ *     gibt es keine eigene Marktdatenquelle, dort gilt die Standardquelle
+ *     LIVE_CHART_PROVIDER.
+ *   - Fehlt die Rollenspalte (Migration 02 noch nicht eingespielt), gilt "user".
+ */
 import { createContext, useCallback, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -12,19 +43,36 @@ import {
   DEFAULT_TIMEFRAME,
   LIVE_CHART_PROVIDER,
   type ChartTimeframe,
+  type LiveChartProvider,
+  type MarketSymbol,
 } from "../types/market";
 import type {
+  LiveChartPresetAssetRecord,
   LiveChartPresetRecord,
   ProfileRecord,
   RepresentedAccountRecord,
   UserPreferencesRecord,
+  UserRole,
 } from "../types/supabase";
+
+/**
+ * Zusammenstellung im Format der Oberfläche: Kopfzeile aus live_chart_presets
+ * plus die sortierten Handelspaare und die aus dem Konto abgeleitete Datenquelle.
+ */
+export type LiveChartPresetView = LiveChartPresetRecord & {
+  provider: LiveChartProvider | string;
+  assets: MarketSymbol[];
+};
 
 type CreateLiveChartPresetInput = {
   name: string;
   assets: string[];
-  provider?: string;
   representedAccountId?: string | null;
+};
+
+type UpdateLiveChartPresetInput = {
+  name: string;
+  assets: string[];
 };
 
 type CreateLiveChartPresetOptions = {
@@ -35,10 +83,13 @@ export interface UserDataContextValue {
   loading: boolean;
   error: string | null;
   profile: ProfileRecord | null;
+  /** Rolle des angemeldeten Benutzers. Nur Bedienerführung, kein Schutz. */
+  role: UserRole;
+  isAdmin: boolean;
   representedAccounts: RepresentedAccountRecord[];
   selectedRepresentedAccountId: string | null;
   selectedRepresentedAccount: RepresentedAccountRecord | null;
-  liveChartPresets: LiveChartPresetRecord[];
+  liveChartPresets: LiveChartPresetView[];
   selectedPresetId: string | null;
   selectedTimeframe: ChartTimeframe;
   refreshUserData: () => Promise<void>;
@@ -48,7 +99,11 @@ export interface UserDataContextValue {
   createLiveChartPreset: (
     input: CreateLiveChartPresetInput,
     options?: CreateLiveChartPresetOptions,
-  ) => Promise<LiveChartPresetRecord | null>;
+  ) => Promise<LiveChartPresetView | null>;
+  updateLiveChartPreset: (
+    presetId: string,
+    input: UpdateLiveChartPresetInput,
+  ) => Promise<LiveChartPresetView | null>;
   deleteLiveChartPreset: (presetId: string) => Promise<boolean>;
 }
 
@@ -73,6 +128,8 @@ const sanitiseProfileRecord = (value: unknown): ProfileRecord | null => {
   return {
     id: candidate.id,
     display_name: typeof candidate.display_name === "string" ? candidate.display_name : null,
+    // Alles außer "admin" wird als Standardbenutzer behandelt (sichere Voreinstellung).
+    role: candidate.role === "admin" ? "admin" : "user",
     created_at: candidate.created_at,
     updated_at: candidate.updated_at,
   };
@@ -107,19 +164,61 @@ const sanitiseRepresentedAccountRecord = (value: unknown): RepresentedAccountRec
   };
 };
 
-const sanitiseLiveChartPresetRecord = (value: unknown): LiveChartPresetRecord | null => {
+/** Spaltenliste für Zusammenstellungen inklusive eingebetteter Handelspaare. */
+const LIVE_CHART_PRESET_SELECT = "*, live_chart_preset_assets(position, instrument)";
+
+/**
+ * Datenquelle einer Zusammenstellung aus dem Börsenkonto. Nur Konten einer
+ * echten Plattform liefern einen eigenen Wert, sonst gilt die Standardquelle.
+ */
+const resolvePresetProvider = (
+  representedAccountId: string,
+  accounts: RepresentedAccountRecord[],
+): LiveChartProvider | string => {
+  const account = accounts.find((candidate) => candidate.id === representedAccountId);
+
+  return account && !isAllRepresentedAccount(account) ? account.provider : LIVE_CHART_PROVIDER;
+};
+
+/** Sortiert die eingebetteten Handelspaare nach position und liefert die Symbole. */
+const extractPresetAssets = (value: unknown): MarketSymbol[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const rows = value.filter(
+    (row): row is Pick<LiveChartPresetAssetRecord, "position" | "instrument"> =>
+      Boolean(row) &&
+      typeof row === "object" &&
+      typeof (row as { position?: unknown }).position === "number" &&
+      typeof (row as { instrument?: unknown }).instrument === "string",
+  );
+
+  return sanitizePresetAssets(
+    [...rows].sort((left, right) => left.position - right.position).map((row) => row.instrument),
+  );
+};
+
+/**
+ * Prüft eine Zusammenstellung aus der Datenbank und bildet sie auf das
+ * Oberflächenformat ab. Zusammenstellungen ohne gültige Handelspaare werden
+ * ausgeblendet, weil die Oberfläche mindestens ein Paar erwartet.
+ */
+const sanitiseLiveChartPresetRecord = (
+  value: unknown,
+  accounts: RepresentedAccountRecord[],
+): LiveChartPresetView | null => {
   if (!value || typeof value !== "object") {
     return null;
   }
 
-  const candidate = value as Partial<LiveChartPresetRecord> & { assets?: unknown };
-  const assets = Array.isArray(candidate.assets) ? sanitizePresetAssets(candidate.assets as string[]) : [];
+  const candidate = value as Partial<LiveChartPresetRecord> & { live_chart_preset_assets?: unknown };
+  const assets = extractPresetAssets(candidate.live_chart_preset_assets);
 
   if (
     typeof candidate.id !== "string" ||
-    typeof candidate.owner_user_id !== "string" ||
+    typeof candidate.represented_account_id !== "string" ||
     typeof candidate.name !== "string" ||
-    typeof candidate.provider !== "string" ||
     typeof candidate.created_at !== "string" ||
     typeof candidate.updated_at !== "string" ||
     assets.length === 0
@@ -129,16 +228,27 @@ const sanitiseLiveChartPresetRecord = (value: unknown): LiveChartPresetRecord | 
 
   return {
     id: candidate.id,
-    owner_user_id: candidate.owner_user_id,
-    represented_account_id:
-      typeof candidate.represented_account_id === "string" ? candidate.represented_account_id : null,
-    provider: candidate.provider,
+    represented_account_id: candidate.represented_account_id,
+    provider: resolvePresetProvider(candidate.represented_account_id, accounts),
     name: candidate.name,
     assets,
     created_at: candidate.created_at,
     updated_at: candidate.updated_at,
   };
 };
+
+/** Zeilen für live_chart_preset_assets: position beginnt bei 1, Reihenfolge wie übergeben. */
+const buildPresetAssetRows = (presetId: string, assets: MarketSymbol[]): LiveChartPresetAssetRecord[] =>
+  assets.map((instrument, index) => ({
+    preset_id: presetId,
+    position: index + 1,
+    instrument,
+  }));
+
+const sortPresetsByCreation = (presets: LiveChartPresetView[]): LiveChartPresetView[] =>
+  [...presets].sort(
+    (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+  );
 
 const sanitiseUserPreferencesRecord = (value: unknown): UserPreferencesRecord | null => {
   if (!value || typeof value !== "object") {
@@ -173,7 +283,7 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
   const [representedAccounts, setRepresentedAccounts] = useState<RepresentedAccountRecord[]>([]);
-  const [liveChartPresets, setLiveChartPresets] = useState<LiveChartPresetRecord[]>([]);
+  const [liveChartPresets, setLiveChartPresets] = useState<LiveChartPresetView[]>([]);
   const [selectedRepresentedAccountId, setSelectedRepresentedAccountIdState] = useState<string | null>(null);
   const [selectedPresetId, setSelectedPresetIdState] = useState<string | null>(null);
   const [selectedTimeframe, setSelectedTimeframeState] = useState<ChartTimeframe>(DEFAULT_TIMEFRAME);
@@ -286,7 +396,7 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
     const [profileResult, accountsResult, presetsResult, preferencesResult] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
       supabase.from("represented_accounts").select("*").order("created_at", { ascending: true }),
-      supabase.from("live_chart_presets").select("*").order("created_at", { ascending: true }),
+      supabase.from("live_chart_presets").select(LIVE_CHART_PRESET_SELECT).order("created_at", { ascending: true }),
       supabase.from("user_preferences").select("*").eq("owner_user_id", user.id).maybeSingle(),
     ]);
 
@@ -318,8 +428,8 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
 
     const nextPresets = Array.isArray(presetsResult.data)
       ? presetsResult.data
-          .map((preset) => sanitiseLiveChartPresetRecord(preset))
-          .filter((preset): preset is LiveChartPresetRecord => preset !== null)
+          .map((preset) => sanitiseLiveChartPresetRecord(preset, nextAccounts))
+          .filter((preset): preset is LiveChartPresetView => preset !== null)
       : [];
 
     const nextPreferences = sanitiseUserPreferencesRecord(preferencesResult.data);
@@ -340,12 +450,7 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
 
     setProfile(sanitiseProfileRecord(profileResult.data));
     setRepresentedAccounts(sortRepresentedAccounts(nextAccounts));
-    setLiveChartPresets(
-      [...nextPresets].sort(
-        (left, right) =>
-          new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-      ),
-    );
+    setLiveChartPresets(sortPresetsByCreation(nextPresets));
     setSelectedRepresentedAccountIdState(nextSelectedRepresentedAccountId);
     setSelectedPresetIdState(nextSelectedPresetId);
     setSelectedTimeframeState(nextSelectedTimeframe);
@@ -382,11 +487,48 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
     void refreshUserData();
   }, [refreshUserData, user]);
 
+  /** Liest eine Zusammenstellung samt Handelspaaren neu, nachdem sie geschrieben wurde. */
+  const reloadPreset = useCallback(
+    async (presetId: string): Promise<LiveChartPresetView | null> => {
+      if (!supabase) {
+        return null;
+      }
+
+      const { data, error: reloadError } = await supabase
+        .from("live_chart_presets")
+        .select(LIVE_CHART_PRESET_SELECT)
+        .eq("id", presetId)
+        .single();
+
+      if (reloadError) {
+        setError(reloadError.message);
+        return null;
+      }
+
+      const preset = sanitiseLiveChartPresetRecord(data, representedAccounts);
+
+      if (!preset) {
+        setError("Supabase returned an invalid live chart preset payload.");
+        return null;
+      }
+
+      setError(null);
+      return preset;
+    },
+    [representedAccounts],
+  );
+
+  /**
+   * Legt eine Zusammenstellung an: zuerst die Kopfzeile, danach die
+   * Handelspaare einzeln mit position 1 bis 4. Scheitert das Schreiben der
+   * Paare, wird die Kopfzeile wieder gelöscht, damit keine leere
+   * Zusammenstellung den Namen blockiert.
+   */
   const createLiveChartPreset = useCallback(
     async (
       input: CreateLiveChartPresetInput,
       options?: CreateLiveChartPresetOptions,
-    ): Promise<LiveChartPresetRecord | null> => {
+    ): Promise<LiveChartPresetView | null> => {
       if (!supabase || !user) {
         return null;
       }
@@ -400,24 +542,27 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
         return null;
       }
 
+      if (!representedAccountId) {
+        setError("Select a represented account before creating presets.");
+        return null;
+      }
+
       const { data, error: queryError } = await supabase
         .from("live_chart_presets")
         .insert({
-          owner_user_id: user.id,
           represented_account_id: representedAccountId,
-          provider: input.provider ?? LIVE_CHART_PROVIDER,
           name,
-          assets,
         })
-        .select("*")
+        .select("id")
         .single();
 
       if (queryError) {
         if (options?.ignoreDuplicate && queryError.code === "23505") {
+          // Dublette: Der Name ist im Konto schon vergeben. Die bestehende
+          // Zusammenstellung über das Konto suchen (eindeutig über Konto und Name).
           const { data: existingPresetData, error: existingPresetError } = await supabase
             .from("live_chart_presets")
-            .select("*")
-            .eq("owner_user_id", user.id)
+            .select(LIVE_CHART_PRESET_SELECT)
             .eq("represented_account_id", representedAccountId)
             .eq("name", name)
             .maybeSingle();
@@ -427,15 +572,12 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
             return null;
           }
 
-          const existingPreset = sanitiseLiveChartPresetRecord(existingPresetData);
+          const existingPreset = sanitiseLiveChartPresetRecord(existingPresetData, representedAccounts);
 
           if (existingPreset) {
             setLiveChartPresets((currentPresets) => {
               const hasPreset = currentPresets.some((preset) => preset.id === existingPreset.id);
-              return hasPreset ? currentPresets : [...currentPresets, existingPreset].sort(
-                (left, right) =>
-                  new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-              );
+              return hasPreset ? currentPresets : sortPresetsByCreation([...currentPresets, existingPreset]);
             });
             return existingPreset;
           }
@@ -449,23 +591,103 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
         return null;
       }
 
-      const nextPreset = sanitiseLiveChartPresetRecord(data);
+      const presetId: string | undefined = data?.id;
 
-      if (!nextPreset) {
+      if (!presetId) {
         setError("Supabase returned an invalid live chart preset payload.");
         return null;
       }
 
-      setError(null);
+      const { error: assetsError } = await supabase
+        .from("live_chart_preset_assets")
+        .insert(buildPresetAssetRows(presetId, assets));
+
+      if (assetsError) {
+        await supabase.from("live_chart_presets").delete().eq("id", presetId);
+        setError(assetsError.message);
+        return null;
+      }
+
+      const nextPreset = await reloadPreset(presetId);
+
+      if (!nextPreset) {
+        return null;
+      }
+
+      setLiveChartPresets((currentPresets) => sortPresetsByCreation([...currentPresets, nextPreset]));
+      return nextPreset;
+    },
+    [reloadPreset, representedAccounts, selectedRepresentedAccountId, user],
+  );
+
+  /**
+   * Ändert Name und Handelspaare einer Zusammenstellung. Die Paare werden
+   * vollständig ersetzt (alte Zeilen löschen, neue schreiben), weil ein
+   * Umsortieren per Update wegen der Schlüssel (preset_id, position) und
+   * (preset_id, instrument) zu Zwischenkonflikten führen würde.
+   * Hinweis: Die Schritte laufen ohne gemeinsame Transaktion. Scheitert das
+   * Schreiben der neuen Paare, ist die Zusammenstellung leer, wird beim
+   * nächsten Laden ausgeblendet und der Fehler wird angezeigt.
+   */
+  const updateLiveChartPreset = useCallback(
+    async (presetId: string, input: UpdateLiveChartPresetInput): Promise<LiveChartPresetView | null> => {
+      if (!supabase || !user) {
+        return null;
+      }
+
+      const assets = sanitizePresetAssets(input.assets);
+      const name = input.name.trim();
+
+      if (!name || assets.length === 0) {
+        setError("Preset name and assets are required.");
+        return null;
+      }
+
+      const { error: renameError } = await supabase
+        .from("live_chart_presets")
+        .update({ name })
+        .eq("id", presetId);
+
+      if (renameError) {
+        setError(
+          renameError.code === "23505"
+            ? "A preset with that name already exists for this represented account."
+            : renameError.message,
+        );
+        return null;
+      }
+
+      const { error: deleteAssetsError } = await supabase
+        .from("live_chart_preset_assets")
+        .delete()
+        .eq("preset_id", presetId);
+
+      if (deleteAssetsError) {
+        setError(deleteAssetsError.message);
+        return null;
+      }
+
+      const { error: insertAssetsError } = await supabase
+        .from("live_chart_preset_assets")
+        .insert(buildPresetAssetRows(presetId, assets));
+
+      if (insertAssetsError) {
+        setError(insertAssetsError.message);
+        return null;
+      }
+
+      const nextPreset = await reloadPreset(presetId);
+
+      if (!nextPreset) {
+        return null;
+      }
+
       setLiveChartPresets((currentPresets) =>
-        [...currentPresets, nextPreset].sort(
-          (left, right) =>
-            new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-        ),
+        currentPresets.map((preset) => (preset.id === presetId ? nextPreset : preset)),
       );
       return nextPreset;
     },
-    [selectedRepresentedAccountId, user],
+    [reloadPreset, user],
   );
 
   const deleteLiveChartPreset = useCallback(
@@ -474,6 +696,8 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
         return false;
       }
 
+      // Die Handelspaare in live_chart_preset_assets entfernt die Datenbank
+      // über "on delete cascade" mit.
       const { error: queryError } = await supabase.from("live_chart_presets").delete().eq("id", presetId);
 
       if (queryError) {
@@ -538,11 +762,15 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
     [representedAccounts, selectedRepresentedAccountId],
   );
 
+  const role: UserRole = profile?.role ?? "user";
+
   const value = useMemo<UserDataContextValue>(
     () => ({
       loading,
       error,
       profile,
+      role,
+      isAdmin: role === "admin",
       representedAccounts,
       selectedRepresentedAccountId,
       selectedRepresentedAccount,
@@ -554,12 +782,14 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
       setSelectedPresetId,
       setSelectedTimeframe,
       createLiveChartPreset,
+      updateLiveChartPreset,
       deleteLiveChartPreset,
     }),
     [
       loading,
       error,
       profile,
+      role,
       representedAccounts,
       selectedRepresentedAccountId,
       selectedRepresentedAccount,
@@ -571,6 +801,7 @@ export const UserDataProvider = ({ children }: PropsWithChildren) => {
       setSelectedPresetId,
       setSelectedTimeframe,
       createLiveChartPreset,
+      updateLiveChartPreset,
       deleteLiveChartPreset,
     ],
   );

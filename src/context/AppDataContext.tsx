@@ -1,3 +1,35 @@
+/**
+ * Datenkontext für importierte Transaktionen und Importdateien.
+ *
+ * Zweck:
+ *   Lädt die Transaktionen und Importdateien des gewählten Börsenkontos aus
+ *   Supabase, baut daraus die Dashboard-Daten (WorkbookData) und führt den
+ *   CSV-Import durch: Börsenkonto vorbereiten, Datei ablegen, Importdatei
+ *   protokollieren, neue Transaktionen mit Verweis auf die Datei speichern.
+ *
+ * Eingaben:
+ *   - Angemeldeter Benutzer (AuthContext).
+ *   - Gewähltes Börsenkonto und Liste aller Konten (UserDataContext).
+ *   - Beim Import: die hochgeladene Datei und die gewählte Plattform.
+ *
+ * Ausgaben:
+ *   - data: aufbereitete Dashboard-Daten.
+ *   - importHistoryFiles: protokollierte Importdateien des gewählten Bereichs.
+ *   - importTransactionsFromFile: Import mit Zusammenfassung, wie viele
+ *     Datensätze tatsächlich neu gespeichert wurden.
+ *
+ * Annahmen:
+ *   - Zugriffsschutz liegt ausschließlich in den Row-Level-Security-Regeln der
+ *     Datenbank (owns_account). Die Abfragen filtern deshalb nicht mehr selbst
+ *     nach dem Benutzer; die Datenbank liefert nur eigene Zeilen.
+ *   - Das Sammelkonto "All" enthält selbst keine Transaktionen. Ist es gewählt,
+ *     werden die Transaktionen aller eigenen Konten geladen.
+ *   - Jede Importplattform hat genau ein eigenes Börsenkonto
+ *     (represented_accounts mit provider = Plattform). Dort landen die Transaktionen.
+ *   - Supabase begrenzt die Zeilen je Abfrage (Projekteinstellung "Max rows",
+ *     Standard 1000). TRANSACTIONS_PAGE_SIZE darf nicht größer sein, sonst
+ *     endet das seitenweise Laden zu früh.
+ */
 import { createContext, useCallback, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useUserData } from "../hooks/useUserData";
@@ -11,6 +43,7 @@ import {
   IMPORT_PLATFORM_OPTIONS,
   parseImportedTransactionsFromFile,
   type SupportedImportPlatform,
+  type TransactionOriginContext,
 } from "../lib/transactionImports";
 import {
   buildImportHistoryStoragePath,
@@ -23,7 +56,9 @@ import type { ImportHistoryFileRecord, ImportedTransactionRecord } from "../type
 type TransactionImportSummary = {
   fileName: string;
   originalFileName: string;
+  /** Anzahl der Zeilen, die die Datenbank tatsächlich neu angelegt hat. */
   importedCount: number;
+  /** Erkannte Vorgänge, die bereits gespeichert waren und übersprungen wurden. */
   skippedCount: number;
   totalParsedCount: number;
   platform: SupportedImportPlatform;
@@ -42,6 +77,11 @@ export interface AppDataContextValue {
   downloadImportHistoryFile: (historyFile: ImportHistoryFileRecord) => Promise<void>;
   refreshAppData: () => Promise<void>;
 }
+
+/** Zeilen je Abfrage beim Nachladen der Transaktionen (siehe Annahmen oben). */
+const TRANSACTIONS_PAGE_SIZE = 1000;
+/** Zeilen je Schreibvorgang beim Import, damit einzelne Anfragen klein bleiben. */
+const TRANSACTIONS_WRITE_BATCH_SIZE = 250;
 
 const createEmptyWorkbookData = (): WorkbookData => ({
   fileName: "No imported transactions",
@@ -62,37 +102,36 @@ const createEmptyWorkbookData = (): WorkbookData => ({
   errors: [],
 });
 
+/** Zahlen kommen aus PostgREST je nach Spaltentyp als number oder string. */
+const parseNumeric = (numericValue: unknown): number | null => {
+  if (numericValue === null || numericValue === undefined || numericValue === "") {
+    return null;
+  }
+
+  if (typeof numericValue === "number") {
+    return Number.isFinite(numericValue) ? numericValue : null;
+  }
+
+  const parsed = Number.parseFloat(String(numericValue));
+
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** Prüft eine Zeile aus imported_transactions. Unvollständige Zeilen werden verworfen. */
 const sanitiseImportedTransactionRecord = (value: unknown): ImportedTransactionRecord | null => {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const candidate = value as Partial<ImportedTransactionRecord>;
-  const parseNumeric = (numericValue: unknown): number | null => {
-    if (numericValue === null || numericValue === undefined || numericValue === "") {
-      return null;
-    }
-
-    if (typeof numericValue === "number") {
-      return Number.isFinite(numericValue) ? numericValue : null;
-    }
-
-    const parsed = Number.parseFloat(String(numericValue));
-
-    return Number.isFinite(parsed) ? parsed : null;
-  };
 
   if (
     typeof candidate.id !== "string" ||
-    typeof candidate.owner_user_id !== "string" ||
     typeof candidate.represented_account_id !== "string" ||
-    typeof candidate.source_platform !== "string" ||
     typeof candidate.external_id !== "string" ||
     typeof candidate.occurred_at !== "string" ||
     typeof candidate.transaction_type !== "string" ||
     typeof candidate.asset !== "string" ||
-    typeof candidate.exchange !== "string" ||
-    typeof candidate.data_source !== "string" ||
     typeof candidate.created_at !== "string" ||
     typeof candidate.updated_at !== "string"
   ) {
@@ -101,11 +140,9 @@ const sanitiseImportedTransactionRecord = (value: unknown): ImportedTransactionR
 
   return {
     id: candidate.id,
-    owner_user_id: candidate.owner_user_id,
     represented_account_id: candidate.represented_account_id,
-    source_platform: candidate.source_platform,
+    import_file_id: typeof candidate.import_file_id === "string" ? candidate.import_file_id : null,
     external_id: candidate.external_id,
-    source_file_name: typeof candidate.source_file_name === "string" ? candidate.source_file_name : null,
     occurred_at: candidate.occurred_at,
     transaction_type: candidate.transaction_type,
     asset: candidate.asset,
@@ -117,39 +154,23 @@ const sanitiseImportedTransactionRecord = (value: unknown): ImportedTransactionR
     fee_currency: typeof candidate.fee_currency === "string" ? candidate.fee_currency : null,
     net_quantity: parseNumeric(candidate.net_quantity),
     net_value: parseNumeric(candidate.net_value),
-    exchange: candidate.exchange,
-    data_source: candidate.data_source,
     raw_payload: candidate.raw_payload ?? null,
     created_at: candidate.created_at,
     updated_at: candidate.updated_at,
   };
 };
 
+/** Prüft eine Zeile aus import_history_files. Unvollständige Zeilen werden verworfen. */
 const sanitiseImportHistoryFileRecord = (value: unknown): ImportHistoryFileRecord | null => {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const candidate = value as Partial<ImportHistoryFileRecord>;
-  const parseNumeric = (numericValue: unknown): number | null => {
-    if (numericValue === null || numericValue === undefined || numericValue === "") {
-      return null;
-    }
-
-    if (typeof numericValue === "number") {
-      return Number.isFinite(numericValue) ? numericValue : null;
-    }
-
-    const parsed = Number.parseFloat(String(numericValue));
-
-    return Number.isFinite(parsed) ? parsed : null;
-  };
 
   if (
     typeof candidate.id !== "string" ||
-    typeof candidate.owner_user_id !== "string" ||
     typeof candidate.represented_account_id !== "string" ||
-    typeof candidate.source_platform !== "string" ||
     typeof candidate.stored_file_name !== "string" ||
     typeof candidate.storage_bucket !== "string" ||
     typeof candidate.storage_path !== "string" ||
@@ -162,9 +183,7 @@ const sanitiseImportHistoryFileRecord = (value: unknown): ImportHistoryFileRecor
 
   return {
     id: candidate.id,
-    owner_user_id: candidate.owner_user_id,
     represented_account_id: candidate.represented_account_id,
-    source_platform: candidate.source_platform,
     stored_file_name: candidate.stored_file_name,
     original_file_name: typeof candidate.original_file_name === "string" ? candidate.original_file_name : null,
     storage_bucket: candidate.storage_bucket,
@@ -177,11 +196,59 @@ const sanitiseImportHistoryFileRecord = (value: unknown): ImportHistoryFileRecor
   };
 };
 
+type SupabaseClientInstance = NonNullable<typeof supabase>;
+
+/**
+ * Lädt alle Transaktionen seitenweise, bis eine Seite weniger Zeilen liefert
+ * als angefordert. Ohne diese Schleife würden bei großen Beständen die ältesten
+ * Vorgänge stillschweigend fehlen und Bestände falsch berechnet.
+ * Die zweite Sortierung nach id macht die Reihenfolge eindeutig, damit beim
+ * Blättern keine Zeile doppelt kommt oder verloren geht.
+ *
+ * accountId = null lädt alle eigenen Konten (Sammelkonto "All").
+ */
+const fetchAllImportedTransactions = async (
+  client: SupabaseClientInstance,
+  accountId: string | null,
+): Promise<{ rows: unknown[]; errorMessage: string | null }> => {
+  const rows: unknown[] = [];
+
+  for (let from = 0; ; from += TRANSACTIONS_PAGE_SIZE) {
+    let query = client.from("imported_transactions").select("*");
+
+    if (accountId) {
+      query = query.eq("represented_account_id", accountId);
+    }
+
+    const { data, error } = await query
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + TRANSACTIONS_PAGE_SIZE - 1);
+
+    if (error) {
+      return { rows: [], errorMessage: error.message };
+    }
+
+    const page = Array.isArray(data) ? data : [];
+
+    rows.push(...page);
+
+    if (page.length < TRANSACTIONS_PAGE_SIZE) {
+      return { rows, errorMessage: null };
+    }
+  }
+};
+
 export const AppDataContext = createContext<AppDataContextValue | undefined>(undefined);
 
 export const AppDataProvider = ({ children }: PropsWithChildren) => {
   const { user } = useAuth();
-  const { loading: userDataLoading, selectedRepresentedAccount, selectedRepresentedAccountId } = useUserData();
+  const {
+    loading: userDataLoading,
+    representedAccounts,
+    selectedRepresentedAccount,
+    selectedRepresentedAccountId,
+  } = useUserData();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -205,28 +272,21 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
 
     setLoading(true);
 
-    const importedTransactionsQuery = supabase
-      .from("imported_transactions")
-      .select("*")
-      .eq("owner_user_id", user.id)
-      .order("occurred_at", { ascending: false });
+    // Kein Filter auf den Benutzer: Die Zugriffsregeln der Datenbank liefern
+    // ohnehin nur Zeilen aus eigenen Börsenkonten.
+    const accountFilter = isAllRepresentedAccount(selectedRepresentedAccount) ? null : selectedRepresentedAccountId;
     const importHistoryQuery = supabase
       .from("import_history_files")
       .select("*")
-      .eq("owner_user_id", user.id)
       .order("imported_at", { ascending: false });
 
     const [transactionsResult, historyResult] = await Promise.all([
-      isAllRepresentedAccount(selectedRepresentedAccount)
-        ? importedTransactionsQuery
-        : importedTransactionsQuery.eq("represented_account_id", selectedRepresentedAccountId),
-      isAllRepresentedAccount(selectedRepresentedAccount)
-        ? importHistoryQuery
-        : importHistoryQuery.eq("represented_account_id", selectedRepresentedAccountId),
+      fetchAllImportedTransactions(supabase, accountFilter),
+      accountFilter ? importHistoryQuery.eq("represented_account_id", accountFilter) : importHistoryQuery,
     ]);
 
-    if (transactionsResult.error || historyResult.error) {
-      setError(transactionsResult.error?.message ?? historyResult.error?.message ?? "Failed to load app data.");
+    if (transactionsResult.errorMessage || historyResult.error) {
+      setError(transactionsResult.errorMessage ?? historyResult.error?.message ?? "Failed to load app data.");
       setImportedTransactions([]);
       setImportHistoryFiles([]);
       setLoading(false);
@@ -235,11 +295,9 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
 
     setError(null);
     setImportedTransactions(
-      Array.isArray(transactionsResult.data)
-        ? transactionsResult.data
-            .map((record) => sanitiseImportedTransactionRecord(record))
-            .filter((record): record is ImportedTransactionRecord => record !== null)
-        : [],
+      transactionsResult.rows
+        .map((record) => sanitiseImportedTransactionRecord(record))
+        .filter((record): record is ImportedTransactionRecord => record !== null),
     );
     setImportHistoryFiles(
       Array.isArray(historyResult.data)
@@ -260,6 +318,15 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
     void refreshAppData();
   }, [refreshAppData, userDataLoading]);
 
+  /**
+   * Importablauf. Die Reihenfolge ist fachlich bedingt: Jede Transaktion
+   * verweist über import_file_id auf ihre Importdatei, also muss die Datei
+   * protokolliert sein, bevor die Transaktionen geschrieben werden.
+   *   1. Börsenkonto der Plattform anlegen oder aktualisieren
+   *   2. Datei in den Storage hochladen
+   *   3. Eintrag in import_history_files anlegen und dessen id übernehmen
+   *   4. Neue Transaktionen mit import_file_id schreiben
+   */
   const importTransactionsFromFile = useCallback(
     async (
       file: File,
@@ -272,16 +339,22 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
         throw new Error(message);
       }
 
+      const client = supabase;
+
       setImporting(true);
       setError(null);
 
       try {
         const fileText = await file.text();
         const storedFileName = buildImportHistoryStoredFileName(platform);
-        const parsedTransactions = parseImportedTransactionsFromFile(fileText, platform, storedFileName);
+        // Zuerst parsen: Ist die Datei unbrauchbar, wird weder Konto noch Datei angelegt.
+        const parsedTransactions = parseImportedTransactionsFromFile(fileText, platform);
         const platformLabel =
           IMPORT_PLATFORM_OPTIONS.find((option) => option.id === platform)?.label ?? platform;
-        const { data: representedAccountData, error: representedAccountError } = await supabase
+
+        // Schritt 1: Börsenkonto. represented_accounts behält owner_user_id,
+        // es ist die einzige Stelle, an der das Eigentum gespeichert wird.
+        const { data: representedAccountData, error: representedAccountError } = await client
           .from("represented_accounts")
           .upsert(
             {
@@ -297,45 +370,23 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
           throw new Error(representedAccountError?.message ?? "Failed to prepare the exchange account.");
         }
 
-        const storagePath = buildImportHistoryStoragePath(user.id, representedAccountData.id, storedFileName);
+        const representedAccountId: string = representedAccountData.id;
 
+        // Vorfilter gegen bereits geladene Vorgänge desselben Kontos. Das spart
+        // Schreibzugriffe; die verbindliche Dublettenprüfung macht die Datenbank
+        // über den Schlüssel (represented_account_id, external_id).
         const existingExternalIds = new Set(
           importedTransactions
-            .filter((transaction) =>
-              isAllRepresentedAccount(selectedRepresentedAccount)
-                ? transaction.source_platform === platform
-                : transaction.represented_account_id === representedAccountData.id,
-            )
+            .filter((transaction) => transaction.represented_account_id === representedAccountId)
             .map((transaction) => transaction.external_id),
         );
         const newTransactions = parsedTransactions.filter(
           (transaction) => !existingExternalIds.has(transaction.external_id),
         );
 
-        if (newTransactions.length > 0) {
-          const rowsToInsert = newTransactions.map((transaction) => ({
-            owner_user_id: user.id,
-            represented_account_id: representedAccountData.id,
-            ...transaction,
-          }));
-
-          for (let index = 0; index < rowsToInsert.length; index += 250) {
-            const batch = rowsToInsert.slice(index, index + 250);
-            const { data, error: queryError } = await supabase
-              .from("imported_transactions")
-              .upsert(batch, {
-                onConflict: "owner_user_id,represented_account_id,source_platform,external_id",
-                ignoreDuplicates: true,
-              })
-              .select("*");
-
-            if (queryError) {
-              throw new Error(queryError.message);
-            }
-          }
-        }
-
-        const { error: uploadError } = await supabase.storage
+        // Schritt 2: Datei im Storage ablegen.
+        const storagePath = buildImportHistoryStoragePath(user.id, representedAccountId, storedFileName);
+        const { error: uploadError } = await client.storage
           .from(IMPORT_HISTORY_BUCKET)
           .upload(storagePath, file, {
             cacheControl: "3600",
@@ -347,21 +398,66 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
           throw new Error(uploadError.message);
         }
 
-        const { error: importHistoryError } = await supabase.from("import_history_files").insert({
-          owner_user_id: user.id,
-          represented_account_id: representedAccountData.id,
-          source_platform: platform,
-          stored_file_name: storedFileName,
-          original_file_name: file.name,
-          storage_bucket: IMPORT_HISTORY_BUCKET,
-          storage_path: storagePath,
-          content_type: file.type || "text/csv",
-          file_size_bytes: file.size,
-        });
+        // Schritt 3: Importdatei protokollieren und ihre id für die Transaktionen übernehmen.
+        const { data: importFileData, error: importHistoryError } = await client
+          .from("import_history_files")
+          .insert({
+            represented_account_id: representedAccountId,
+            stored_file_name: storedFileName,
+            original_file_name: file.name,
+            storage_bucket: IMPORT_HISTORY_BUCKET,
+            storage_path: storagePath,
+            content_type: file.type || "text/csv",
+            file_size_bytes: file.size,
+          })
+          .select("id")
+          .single();
 
-        if (importHistoryError) {
-          await supabase.storage.from(IMPORT_HISTORY_BUCKET).remove([storagePath]);
-          throw new Error(importHistoryError.message);
+        if (importHistoryError || !importFileData?.id) {
+          await client.storage.from(IMPORT_HISTORY_BUCKET).remove([storagePath]);
+          throw new Error(importHistoryError?.message ?? "Failed to record the import file.");
+        }
+
+        const importFileId: string = importFileData.id;
+
+        // Schritt 4: Transaktionen schreiben. ignoreDuplicates entspricht
+        // "on conflict do nothing"; die Datenbank gibt dann nur die tatsächlich
+        // neu angelegten Zeilen zurück. Deren Anzahl ist die gemeldete Importzahl.
+        let insertedCount = 0;
+
+        try {
+          const rowsToInsert = newTransactions.map((transaction) => ({
+            represented_account_id: representedAccountId,
+            import_file_id: importFileId,
+            ...transaction,
+          }));
+
+          for (let index = 0; index < rowsToInsert.length; index += TRANSACTIONS_WRITE_BATCH_SIZE) {
+            const batch = rowsToInsert.slice(index, index + TRANSACTIONS_WRITE_BATCH_SIZE);
+            const { data: insertedRows, error: queryError } = await client
+              .from("imported_transactions")
+              .upsert(batch, {
+                onConflict: "represented_account_id,external_id",
+                ignoreDuplicates: true,
+              })
+              .select("id");
+
+            if (queryError) {
+              throw new Error(queryError.message);
+            }
+
+            insertedCount += Array.isArray(insertedRows) ? insertedRows.length : 0;
+          }
+        } catch (writeError) {
+          // Wurde noch keine Transaktion gespeichert, ist die protokollierte Datei
+          // ohne Bezug. Dann Protokolleintrag und Datei wieder entfernen.
+          // Wurden schon Stapel gespeichert, bleibt die Datei als deren Herkunft stehen.
+          if (insertedCount === 0) {
+            await client.from("import_history_files").delete().eq("id", importFileId);
+            await client.storage.from(IMPORT_HISTORY_BUCKET).remove([storagePath]);
+          }
+
+          throw writeError;
         }
 
         await refreshAppData();
@@ -369,8 +465,8 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
         return {
           fileName: storedFileName,
           originalFileName: file.name,
-          importedCount: newTransactions.length,
-          skippedCount: parsedTransactions.length - newTransactions.length,
+          importedCount: insertedCount,
+          skippedCount: parsedTransactions.length - insertedCount,
           totalParsedCount: parsedTransactions.length,
           platform,
         };
@@ -383,7 +479,7 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
         setImporting(false);
       }
     },
-    [importedTransactions, refreshAppData, selectedRepresentedAccount, user],
+    [importedTransactions, refreshAppData, user],
   );
 
   const downloadImportHistoryFile = useCallback(async (historyFile: ImportHistoryFileRecord) => {
@@ -416,12 +512,22 @@ export const AppDataProvider = ({ children }: PropsWithChildren) => {
     URL.revokeObjectURL(url);
   }, []);
 
+  // Herkunft für die Anzeige: Plattform über das Börsenkonto, Dateiname über
+  // die Importdatei. Beides wird nicht mehr in der Transaktion gespeichert.
+  const transactionOrigin = useMemo<TransactionOriginContext>(
+    () => ({
+      providerByAccountId: new Map(representedAccounts.map((account) => [account.id, account.provider])),
+      fileNameByImportFileId: new Map(importHistoryFiles.map((file) => [file.id, file.stored_file_name])),
+    }),
+    [importHistoryFiles, representedAccounts],
+  );
+
   const data = useMemo(
     () =>
       importedTransactions.length > 0
-        ? buildWorkbookDataFromImportedTransactions(importedTransactions)
+        ? buildWorkbookDataFromImportedTransactions(importedTransactions, transactionOrigin)
         : createEmptyWorkbookData(),
-    [importedTransactions],
+    [importedTransactions, transactionOrigin],
   );
 
   const value = useMemo<AppDataContextValue>(

@@ -443,7 +443,6 @@ export const LiveChartsPage = ({ data }: { data: WorkbookData | null }) => {
           {
             name: automaticPreset.name,
             assets: automaticPreset.assets,
-            provider: automaticPreset.provider,
             representedAccountId: selectedRepresentedAccountId,
           },
           { ignoreDuplicate: true },
@@ -470,7 +469,6 @@ export const LiveChartsPage = ({ data }: { data: WorkbookData | null }) => {
             {
               name: legacyPreset.name,
               assets: legacyPreset.assets,
-              provider: legacyPreset.provider,
               representedAccountId: selectedRepresentedAccountId,
             },
             { ignoreDuplicate: true },
@@ -552,7 +550,6 @@ export const LiveChartsPage = ({ data }: { data: WorkbookData | null }) => {
     const createdPreset = await createLiveChartPreset({
       name: preset.name,
       assets: preset.assets,
-      provider: preset.provider,
       representedAccountId: selectedRepresentedAccountId,
     });
 

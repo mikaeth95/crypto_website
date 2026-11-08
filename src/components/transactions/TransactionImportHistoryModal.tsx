@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Download, History, X } from "lucide-react";
-import { IMPORT_PLATFORM_OPTIONS } from "../../lib/transactionImports";
+import { useUserData } from "../../hooks/useUserData";
+import { getImportPlatformLabel } from "../../lib/transactionImports";
 import type { ImportHistoryFileRecord } from "../../types/supabase";
 
 interface TransactionImportHistoryModalProps {
@@ -52,10 +53,11 @@ export const TransactionImportHistoryModal = ({
   onClose,
   onDownload,
 }: TransactionImportHistoryModalProps) => {
-  const platformLabels = useMemo(
-    () =>
-      Object.fromEntries(IMPORT_PLATFORM_OPTIONS.map((option) => [option.id, option.label])),
-    [],
+  const { representedAccounts } = useUserData();
+  // Die Plattform einer Importdatei steht nach der 3. NF nur noch am Börsenkonto.
+  const providerByAccountId = useMemo(
+    () => new Map(representedAccounts.map((account) => [account.id, account.provider])),
+    [representedAccounts],
   );
 
   return (
@@ -110,7 +112,9 @@ export const TransactionImportHistoryModal = ({
                 <ul className="max-h-[26rem] space-y-3 overflow-y-auto pr-1" aria-label="Saved import history files">
                   {historyFiles.map((historyFile) => {
                   const isDownloading = downloadingFileId === historyFile.id;
-                  const platformLabel = platformLabels[historyFile.source_platform] ?? historyFile.source_platform;
+                  const platformLabel = getImportPlatformLabel(
+                    providerByAccountId.get(historyFile.represented_account_id),
+                  );
 
                   return (
                     <li

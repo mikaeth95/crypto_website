@@ -1,3 +1,41 @@
+/**
+ * Import und Aufbereitung von Börsen-Transaktionen.
+ *
+ * Zweck:
+ *   1. Liest einen CSV-Export der Crypto.com Exchange ein und fasst die
+ *      Journalzeilen zu fachlichen Vorgängen zusammen (Kauf, Verkauf,
+ *      Konvertierung, Token-Umstellung, Ein- und Auszahlung). Jeder Vorgang
+ *      bekommt eine stabile external_id, damit ein erneuter Import derselben
+ *      Datei keine Dubletten erzeugt.
+ *   2. Baut aus den gespeicherten Transaktionen die Daten für die Oberfläche:
+ *      Transaktionsliste, Bestände je Asset und Quote-Währung (Durchschnitts-
+ *      kostenmethode), Performance-Zeilen und Gesamtsummen in EUR und USD.
+ *
+ * Eingaben:
+ *   - Dateitext des CSV-Exports und die gewählte Importplattform.
+ *   - Gespeicherte Zeilen aus imported_transactions sowie ein Herkunftskontext
+ *     (Plattform je Börsenkonto, Dateiname je Importdatei) für die Anzeige.
+ *
+ * Ausgaben:
+ *   - ImportedTransactionInput[]: fachliche Felder einer Transaktion ohne
+ *     Konto- und Dateibezug. represented_account_id und import_file_id setzt
+ *     der Aufrufer (AppDataContext), weil erst er das Konto und die Importdatei kennt.
+ *   - WorkbookData für alle Seiten des Dashboards.
+ *
+ * Annahmen:
+ *   - Das CSV entspricht dem Journal-Export der Crypto.com Exchange (Kopfzeile
+ *     beginnt mit "Journal ID,"). Andere Plattformen werden abgelehnt.
+ *   - Zeiten im Export sind UTC.
+ *   - Mengen, Preise und Gebühren werden als Beträge (ohne Vorzeichen)
+ *     gespeichert. Die Richtung ergibt sich aus transaction_type. Das passt zur
+ *     Wertebereichsprüfung imported_transactions_not_negative in der Datenbank.
+ *   - Börse und Datenquelle stehen nach der Umstellung auf die 3. Normalform
+ *     nicht mehr in jeder Transaktionszeile. Die Börse wird aus dem Börsenkonto
+ *     (represented_accounts.provider) abgeleitet, die Datenquelle aus der
+ *     verknüpften Importdatei (import_file_id -> import_history_files).
+ *   - Bestände werden je Paar (Asset, Quote) mit Durchschnittskosten geführt.
+ *     Die FIFO-Auswertung abgeschlossener Trades liegt getrennt in tradeHistory.ts.
+ */
 import type {
   CoinPerformanceRow,
   PortfolioAssetRow,
@@ -16,10 +54,25 @@ export const IMPORT_PLATFORM_OPTIONS = [
 
 export type SupportedImportPlatform = (typeof IMPORT_PLATFORM_OPTIONS)[number]["id"];
 
+/**
+ * Anzeigename einer Plattform. Unbekannte Kennungen (z. B. das Sammelkonto "all")
+ * werden unverändert zurückgegeben, damit nie ein leeres Feld entsteht.
+ */
+export const getImportPlatformLabel = (provider: string | null | undefined): string => {
+  if (!provider) {
+    return UNKNOWN_EXCHANGE_LABEL;
+  }
+
+  return IMPORT_PLATFORM_OPTIONS.find((option) => option.id === provider)?.label ?? provider;
+};
+
+/**
+ * Fachliche Felder einer Transaktion, so wie sie der CSV-Parser liefert.
+ * Bewusst ohne Plattform, Börse, Datenquelle und Dateiname: diese Angaben hängen
+ * nur vom Börsenkonto bzw. von der Importdatei ab und werden dort einmal gespeichert.
+ */
 export type ImportedTransactionInput = {
-  source_platform: SupportedImportPlatform;
   external_id: string;
-  source_file_name: string | null;
   occurred_at: string;
   transaction_type: string;
   asset: string;
@@ -31,9 +84,18 @@ export type ImportedTransactionInput = {
   fee_currency: string | null;
   net_quantity: number | null;
   net_value: number | null;
-  exchange: string;
-  data_source: string;
   raw_payload: unknown;
+};
+
+/**
+ * Herkunftsangaben für die Anzeige, aufgelöst über Fremdschlüssel statt über
+ * Textspalten in der Transaktion. Beide Tabellen lädt AppDataContext ohnehin.
+ */
+export type TransactionOriginContext = {
+  /** represented_accounts.id -> represented_accounts.provider */
+  providerByAccountId: ReadonlyMap<string, string>;
+  /** import_history_files.id -> gespeicherter Dateiname */
+  fileNameByImportFileId: ReadonlyMap<string, string>;
 };
 
 type CryptoComExchangeCsvRow = {
@@ -62,8 +124,10 @@ type PortfolioAggregateState = {
   tradeCount: number;
 };
 
+// Alle Transaktionen stammen derzeit aus CSV-Importen. Die frühere Spalte
+// data_source enthielt immer diesen Wert und war damit überflüssig.
 const IMPORT_SOURCE_LABEL = "Imported CSV";
-const CRYPTO_COM_EXCHANGE_LABEL = "Crypto.com Exchange";
+const UNKNOWN_EXCHANGE_LABEL = "Unknown exchange";
 const TOKEN_MIGRATION_TRANSACTION_TYPE = "Token-Umstellung";
 const CSV_HEADER_PREFIX = "Journal ID,";
 const FLOATING_POINT_EPSILON = 1e-9;
@@ -323,7 +387,6 @@ const sumFeeRows = (rows: CryptoComExchangeCsvRow[]) => {
 
 const buildTradeTransaction = (
   rows: CryptoComExchangeCsvRow[],
-  sourceFileName: string,
 ): ImportedTransactionInput | null => {
   const tradingRows = rows.filter((row) => row.journalType === "TRADING");
 
@@ -391,9 +454,7 @@ const buildTradeTransaction = (
   }
 
   return {
-    source_platform: "crypto_com_exchange",
     external_id: buildTradeExternalId(rows),
-    source_file_name: sourceFileName,
     occurred_at: occurredAt,
     transaction_type: transactionType,
     asset,
@@ -405,15 +466,12 @@ const buildTradeTransaction = (
     fee_currency: normalizedFeeCurrency,
     net_quantity: netQuantity > 0 ? netQuantity : null,
     net_value: netValue,
-    exchange: CRYPTO_COM_EXCHANGE_LABEL,
-    data_source: IMPORT_SOURCE_LABEL,
     raw_payload: rows,
   };
 };
 
 const buildConversionTransaction = (
   rows: CryptoComExchangeCsvRow[],
-  sourceFileName: string,
 ): ImportedTransactionInput | null => {
   const positiveRow = rows.find((row) => (row.transactionQuantity ?? 0) > 0);
   const negativeRow = rows.find((row) => (row.transactionQuantity ?? 0) < 0);
@@ -435,9 +493,7 @@ const buildConversionTransaction = (
   }
 
   return {
-    source_platform: "crypto_com_exchange",
     external_id: buildConversionExternalId(rows),
-    source_file_name: sourceFileName,
     occurred_at: occurredAt,
     transaction_type: "Konvertierung",
     asset,
@@ -449,15 +505,12 @@ const buildConversionTransaction = (
     fee_currency: null,
     net_quantity: quantity > 0 ? roundTo(quantity) : null,
     net_value: grossValue > 0 ? roundTo(grossValue) : null,
-    exchange: CRYPTO_COM_EXCHANGE_LABEL,
-    data_source: IMPORT_SOURCE_LABEL,
     raw_payload: rows,
   };
 };
 
 const buildTokenMigrationTransaction = (
   rows: CryptoComExchangeCsvRow[],
-  sourceFileName: string,
 ): ImportedTransactionInput | null => {
   const adjustmentRows = rows.filter((row) => row.journalType === "ADMIN_ADJUSTMENT");
   const positiveRow = adjustmentRows.find((row) => (row.transactionQuantity ?? 0) > 0);
@@ -478,9 +531,7 @@ const buildTokenMigrationTransaction = (
   }
 
   return {
-    source_platform: "crypto_com_exchange",
     external_id: buildTokenMigrationExternalId(adjustmentRows),
-    source_file_name: sourceFileName,
     occurred_at: occurredAt,
     transaction_type: TOKEN_MIGRATION_TRANSACTION_TYPE,
     asset,
@@ -492,8 +543,6 @@ const buildTokenMigrationTransaction = (
     fee_currency: null,
     net_quantity: roundTo(quantity),
     net_value: roundTo(previousQuantity),
-    exchange: CRYPTO_COM_EXCHANGE_LABEL,
-    data_source: IMPORT_SOURCE_LABEL,
     raw_payload: adjustmentRows,
   };
 };
@@ -512,7 +561,6 @@ const mapGenericJournalType = (journalType: string): string => {
 
 const buildGenericTransaction = (
   row: CryptoComExchangeCsvRow,
-  sourceFileName: string,
 ): ImportedTransactionInput | null => {
   const asset = normalizeImportedAssetCode(row.instrument);
   const quote = isQuoteLikeInstrument(row.instrument) ? normalizeImportedAssetCode(row.instrument) : null;
@@ -528,9 +576,7 @@ const buildGenericTransaction = (
   }
 
   return {
-    source_platform: "crypto_com_exchange",
     external_id: `crypto_com_exchange:journal:${row.journalId}`,
-    source_file_name: sourceFileName,
     occurred_at: occurredAt,
     transaction_type: mapGenericJournalType(row.journalType),
     asset,
@@ -543,15 +589,12 @@ const buildGenericTransaction = (
     fee_currency: null,
     net_quantity: quantity > 0 ? roundTo(quantity) : null,
     net_value: grossValue > 0 ? roundTo(grossValue) : null,
-    exchange: CRYPTO_COM_EXCHANGE_LABEL,
-    data_source: IMPORT_SOURCE_LABEL,
     raw_payload: row,
   };
 };
 
 export const parseCryptoComExchangeTransactions = (
   fileText: string,
-  sourceFileName: string,
 ): ImportedTransactionInput[] => {
   const csvRows = mapCsvRows(fileText);
   const groupedRows = new Map<string, CryptoComExchangeCsvRow[]>();
@@ -576,12 +619,12 @@ export const parseCryptoComExchangeTransactions = (
       const journalTypes = new Set(rows.map((row) => row.journalType));
 
       if (journalTypes.has("STABLECOIN_CONVERSION")) {
-        const transaction = buildConversionTransaction(rows, sourceFileName);
+        const transaction = buildConversionTransaction(rows);
         return transaction ? [transaction] : [];
       }
 
       if (journalTypes.has("ADMIN_ADJUSTMENT")) {
-        const migration = buildTokenMigrationTransaction(rows, sourceFileName);
+        const migration = buildTokenMigrationTransaction(rows);
 
         if (migration) {
           return [migration];
@@ -589,12 +632,12 @@ export const parseCryptoComExchangeTransactions = (
       }
 
       if (journalTypes.has("TRADING") || journalTypes.has("TRADE_FEE")) {
-        const transaction = buildTradeTransaction(rows, sourceFileName);
+        const transaction = buildTradeTransaction(rows);
         return transaction ? [transaction] : [];
       }
 
       return rows
-        .map((row) => buildGenericTransaction(row, sourceFileName))
+        .map((row) => buildGenericTransaction(row))
         .filter((transaction): transaction is ImportedTransactionInput => transaction !== null);
     })
     .sort(
@@ -606,10 +649,9 @@ export const parseCryptoComExchangeTransactions = (
 export const parseImportedTransactionsFromFile = (
   fileText: string,
   platform: SupportedImportPlatform,
-  sourceFileName: string,
 ): ImportedTransactionInput[] => {
   if (platform === "crypto_com_exchange") {
-    return parseCryptoComExchangeTransactions(fileText, sourceFileName);
+    return parseCryptoComExchangeTransactions(fileText);
   }
 
   throw new Error(`Unsupported import platform: ${platform}`);
@@ -723,7 +765,26 @@ const extractTransactionIdentifiers = (rawPayload: unknown) => {
   };
 };
 
-const toTransactionRow = (record: ImportedTransactionRecord): TransactionRow => ({
+/**
+ * Herkunft einer Transaktion für die Detailansicht.
+ * Gewählte Variante: Die Datenquelle wird über import_file_id aus der Tabelle
+ * import_history_files aufgelöst (Fremdschlüssel statt Textkopie). Altbestände,
+ * deren Datei bei der Migration nicht zugeordnet werden konnte (import_file_id
+ * ist null), zeigen nur "Imported CSV" ohne Dateinamen.
+ */
+const resolveDataSourceLabel = (
+  record: ImportedTransactionRecord,
+  origin: TransactionOriginContext,
+): string => {
+  const fileName = record.import_file_id ? origin.fileNameByImportFileId.get(record.import_file_id) : undefined;
+
+  return fileName ? `${IMPORT_SOURCE_LABEL} - ${fileName}` : IMPORT_SOURCE_LABEL;
+};
+
+const toTransactionRow = (
+  record: ImportedTransactionRecord,
+  origin: TransactionOriginContext,
+): TransactionRow => ({
   ...extractTransactionIdentifiers(record.raw_payload),
   datum: record.occurred_at ? record.occurred_at.slice(0, 10) : null,
   occurredAt: record.occurred_at,
@@ -738,10 +799,9 @@ const toTransactionRow = (record: ImportedTransactionRecord): TransactionRow => 
   nettomenge: formatDecimal(coerceNumericValue(record.net_quantity)),
   nettowert: formatValueWithUnit(coerceNumericValue(record.net_value), record.quote),
   transaktionId: record.external_id,
-  boerse: record.exchange,
-  datenquelle: record.source_file_name
-    ? `${record.data_source} - ${record.source_file_name}`
-    : record.data_source,
+  // Die Börse hängt allein am Börsenkonto (3. NF) und wird von dort gelesen.
+  boerse: getImportPlatformLabel(origin.providerByAccountId.get(record.represented_account_id)),
+  datenquelle: resolveDataSourceLabel(record, origin),
 });
 
 const createEmptySummary = (): PortfolioSummary => ({
@@ -1093,19 +1153,28 @@ const deriveSummaryFromPortfolioAssets = (assets: PortfolioAssetRow[]): Portfoli
   return summary;
 };
 
+/**
+ * Baut aus allen geladenen Transaktionen die Datengrundlage des Dashboards.
+ * Der Herkunftskontext wird nur für Anzeigefelder (Börse, Datenquelle,
+ * Dateiname der jüngsten Transaktion) gebraucht, nicht für Berechnungen.
+ */
 export const buildWorkbookDataFromImportedTransactions = (
   records: ImportedTransactionRecord[],
+  origin: TransactionOriginContext,
 ): WorkbookData => {
   const sortedRecords = normalizeLegacyTokenMigrations(records).sort(
     (left, right) => new Date(right.occurred_at).getTime() - new Date(left.occurred_at).getTime(),
   );
-  const transactions = sortedRecords.map(toTransactionRow);
+  const transactions = sortedRecords.map((record) => toTransactionRow(record, origin));
   const assets = derivePortfolioAssets(sortedRecords);
   const performance = derivePerformanceRows(assets);
   const summary = deriveSummaryFromPortfolioAssets(assets);
+  const latestImportFileId = sortedRecords[0]?.import_file_id;
 
   return {
-    fileName: sortedRecords[0]?.source_file_name ?? "No imported transactions",
+    fileName:
+      (latestImportFileId ? origin.fileNameByImportFileId.get(latestImportFileId) : undefined) ??
+      "No imported transactions",
     loadedAt: sortedRecords[0]?.updated_at ?? new Date().toISOString(),
     summary,
     assets,

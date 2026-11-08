@@ -1,8 +1,35 @@
-import type { ChartTimeframe, LiveChartProvider, MarketSymbol } from "./market";
+/**
+ * Zeilentypen der Supabase-Datenbank.
+ *
+ * Zweck:
+ *   Bildet jede Tabelle des Schemas (Stand nach 01_dritte_normalform.sql und
+ *   02_benutzerrollen.sql) als TypeScript-Typ ab, damit der Compiler jede Stelle
+ *   meldet, die noch eine entfernte Spalte liest oder schreibt.
+ *
+ * Eingaben:
+ *   Keine. Reine Typdefinitionen.
+ *
+ * Ausgaben:
+ *   Ein Typ je Tabelle bzw. je RPC-Ergebnis.
+ *
+ * Annahmen:
+ *   - Eigentum wird nur noch an zwei Stellen gespeichert: represented_accounts.owner_user_id
+ *     und user_preferences.owner_user_id. Alle anderen Tabellen hängen über das
+ *     Börsenkonto (represented_account_id) am Benutzer.
+ *   - Die Plattform einer Transaktion bzw. Importdatei ergibt sich aus
+ *     represented_accounts.provider und wird nicht mehr je Zeile gespeichert.
+ *   - Zahlen aus double-precision-Spalten können von PostgREST als number oder
+ *     string kommen; die Kontexte normalisieren sie beim Einlesen.
+ */
+import type { ChartTimeframe } from "./market";
+
+/** Benutzertyp. Die Datenbank kennt genau diese zwei Werte (enum public.user_role). */
+export type UserRole = "user" | "admin";
 
 export interface ProfileRecord {
   id: string;
   display_name: string | null;
+  role: UserRole;
   created_at: string;
   updated_at: string;
 }
@@ -17,15 +44,20 @@ export interface RepresentedAccountRecord {
   updated_at: string;
 }
 
+/** Kopf einer Chart-Zusammenstellung. Die Handelspaare liegen in live_chart_preset_assets. */
 export interface LiveChartPresetRecord {
   id: string;
-  owner_user_id: string;
-  represented_account_id: string | null;
-  provider: LiveChartProvider | string;
+  represented_account_id: string;
   name: string;
-  assets: MarketSymbol[];
   created_at: string;
   updated_at: string;
+}
+
+/** Ein Handelspaar an einer festen Position (1 bis 4) innerhalb einer Zusammenstellung. */
+export interface LiveChartPresetAssetRecord {
+  preset_id: string;
+  position: number;
+  instrument: string;
 }
 
 export interface UserPreferencesRecord {
@@ -38,11 +70,10 @@ export interface UserPreferencesRecord {
 
 export interface ImportedTransactionRecord {
   id: string;
-  owner_user_id: string;
   represented_account_id: string;
-  source_platform: string;
+  /** Importdatei, aus der die Transaktion zuerst übernommen wurde. Null bei Altbestand ohne Zuordnung. */
+  import_file_id: string | null;
   external_id: string;
-  source_file_name: string | null;
   occurred_at: string;
   transaction_type: string;
   asset: string;
@@ -54,8 +85,6 @@ export interface ImportedTransactionRecord {
   fee_currency: string | null;
   net_quantity: number | string | null;
   net_value: number | string | null;
-  exchange: string;
-  data_source: string;
   raw_payload: unknown;
   created_at: string;
   updated_at: string;
@@ -63,9 +92,7 @@ export interface ImportedTransactionRecord {
 
 export interface ImportHistoryFileRecord {
   id: string;
-  owner_user_id: string;
   represented_account_id: string;
-  source_platform: string;
   stored_file_name: string;
   original_file_name: string | null;
   storage_bucket: string;
@@ -75,4 +102,15 @@ export interface ImportHistoryFileRecord {
   imported_at: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Eine Zeile aus der RPC-Funktion admin_user_overview(). Enthält nur Zählwerte, keine Beträge. */
+export interface AdminUserOverviewRecord {
+  id: string;
+  display_name: string | null;
+  role: UserRole;
+  created_at: string;
+  account_count: number;
+  transaction_count: number;
+  last_import: string | null;
 }
