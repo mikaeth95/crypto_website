@@ -82,7 +82,7 @@ update public.imported_transactions t
 set import_file_id = f.id
 from public.import_history_files f
 where f.represented_account_id = t.represented_account_id
-  and f.original_file_name = t.source_file_name;
+  and f.stored_file_name = t.source_file_name;
 
 -- ---------------------------------------------------------------------
 -- E. Doppelt gespeicherte Spalten entfernen
