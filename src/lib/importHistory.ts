@@ -1,3 +1,21 @@
+/**
+ * Ablage importierter CSV-Dateien im Supabase-Storage.
+ *
+ * Zweck:
+ *   Erzeugt eindeutige Dateinamen und Speicherpfade für importierte Dateien.
+ *
+ * Eingaben:
+ *   Plattform, Benutzer-id, Konto-id, Zeitpunkt.
+ *
+ * Ausgaben:
+ *   Dateiname "<plattform>-<zeitstempel>.csv" und Pfad
+ *   "<benutzer-id>/<konto-id>/<dateiname>".
+ *
+ * Annahmen:
+ *   - Der erste Ordner des Pfads muss die Benutzer-id sein. Darauf prüfen die
+ *     Storage-Zugriffsregeln in schema.sql.
+ *   - Der Zeitstempel hat Millisekunden und ist damit je Konto praktisch eindeutig.
+ */
 import type { SupportedImportPlatform } from "./transactionImports";
 
 export const IMPORT_HISTORY_BUCKET = "transaction-import-history";

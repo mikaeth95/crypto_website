@@ -1,3 +1,24 @@
+/**
+ * Anmeldung und Sitzung.
+ *
+ * Zweck:
+ *   Stellt die Supabase-Sitzung, den angemeldeten Benutzer sowie Anmelden,
+ *   Registrieren und Abmelden für die ganze Anwendung bereit.
+ *
+ * Eingaben:
+ *   Supabase Auth (E-Mail und Passwort), Anzeigename bei der Registrierung.
+ *
+ * Ausgaben:
+ *   session, user, loading, authError und die Aktionen signIn, signUp, signOut.
+ *
+ * Annahmen:
+ *   - Profil, Sammelkonto und Einstellungen eines neuen Benutzers legt der
+ *     Datenbank-Trigger handle_new_user an, nicht das Frontend.
+ *   - Passwortregeln setzt verbindlich Supabase Auth. Die Prüfung im Formular
+ *     ist nur Bedienerführung.
+ *   - Die Formulare geben Fehlermeldungen von Supabase bei der Anmeldung nicht
+ *     weiter, damit sich nicht ableiten lässt, ob eine E-Mail registriert ist.
+ */
 import type { AuthError, Session, User } from "@supabase/supabase-js";
 import { createContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import {

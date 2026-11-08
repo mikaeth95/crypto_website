@@ -1,3 +1,22 @@
+/**
+ * Börsenkonten (represented_accounts).
+ *
+ * Zweck:
+ *   Konstanten und Hilfsfunktionen für Börsenkonten. Ein Börsenkonto bündelt die
+ *   Transaktionen, Importdateien und Chart-Zusammenstellungen einer Plattform.
+ *
+ * Eingaben:
+ *   Kontodatensätze mit provider und name.
+ *
+ * Ausgaben:
+ *   Erkennung und Sortierung des Sammelkontos "All", Vorlage für neue Konten.
+ *
+ * Annahmen:
+ *   - Jeder Benutzer hat ein Sammelkonto "All" (provider "all"). Es enthält selbst
+ *     keine Transaktionen, sondern steht in der Oberfläche für "alle Konten".
+ *   - provider eines echten Kontos ist die Importplattform. Daraus leiten sich
+ *     Börse und Plattform jeder Transaktion ab (3. Normalform).
+ */
 export const ALL_REPRESENTED_ACCOUNT_PROVIDER = "all";
 export const ALL_REPRESENTED_ACCOUNT_NAME = "All";
 export const DEFAULT_REPRESENTED_ACCOUNT_BASE_CURRENCY = "EUR";

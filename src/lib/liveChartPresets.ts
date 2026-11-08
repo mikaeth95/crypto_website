@@ -1,3 +1,26 @@
+/**
+ * Fachlogik der Chart-Zusammenstellungen (Presets) im Live-Chart-Bereich.
+ *
+ * Zweck:
+ *   Normalisiert die Handelspaare einer Zusammenstellung, erzeugt automatische
+ *   Zusammenstellungen aus den Portfolio-Beständen (je bis zu 4 Paare), erkennt
+ *   gleiche Zusammenstellungen und übernimmt einmalig alte Zusammenstellungen
+ *   aus dem localStorage des Browsers in die Datenbank.
+ *
+ * Eingaben:
+ *   Handelspaare als Text (z. B. "BTC_EUR"), Portfolio-Bestände, localStorage.
+ *
+ * Ausgaben:
+ *   Bereinigte Zusammenstellungen im Oberflächenformat (LiveChartPreset).
+ *
+ * Annahmen:
+ *   - Eine Zusammenstellung hat 1 bis 4 verschiedene Handelspaare. Die Reihenfolge
+ *     der Liste entspricht der Spalte position in live_chart_preset_assets.
+ *   - Diese Datei spricht nicht mit der Datenbank. Speichern und Laden
+ *     übernimmt UserDataContext.
+ *   - Paare mit Fiat-Basiswährung (z. B. EUR_USD) kommen nicht in automatische
+ *     Zusammenstellungen.
+ */
 import type { PortfolioAssetRow } from "../types/portfolio";
 import {
   LIVE_CHART_PROVIDER,
