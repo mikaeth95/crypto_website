@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Pie, PieChart, ResponsiveContainer, Cell } from "recharts";
 import type { PortfolioAssetRow } from "../../types/portfolio";
 import { formatCurrency, formatNumber } from "../../lib/formatters";
@@ -10,15 +10,31 @@ const BASE_HUE = 220;
 const SATURATION_STEPS = [76, 68, 82, 72, 86];
 const LIGHTNESS_STEPS = [58, 52, 64, 48, 60];
 
+/**
+ * Kleinstpositionen ("Dust") werden im Tortendiagramm zu einem Stück
+ * zusammengefasst. Ohne das bekommt jedes Stück seinen eigenen Abstand
+ * (paddingAngle). Bei sehr vielen Positionen übersteigen allein die Abstände
+ * 360 Grad und recharts zeichnet nur noch einen Bogen statt eines Rings.
+ * In der Liste neben dem Diagramm bleiben alle Positionen einzeln sichtbar.
+ */
+const DUST_THRESHOLD_PCT = 1;
+const MAX_PIE_SLICES = 12;
+const PIE_PADDING_ANGLE = 2;
+const DUST_KEY = "__dust__";
+const DUST_COLOR = "hsl(220 12% 42%)";
+
 type AllocationTab = "fiat" | "crypto";
 
 type AllocationDatum = {
+  key: string;
   name: string;
   value: number;
   balance: number;
   pct: number;
   quote: string | null;
   isFiat: boolean;
+  isDust: boolean;
+  dustCount: number;
   displayValue: number;
   color: string;
 };
@@ -59,14 +75,19 @@ const buildAllocationPalette = (count: number) => {
   });
 };
 
-const formatAllocationValue = (entry: AllocationDatum, activeTab: AllocationTab) =>
-  activeTab === "fiat"
+const formatAllocationValue = (entry: AllocationDatum, activeTab: AllocationTab) => {
+  if (entry.key === DUST_KEY) {
+    return `${entry.dustCount} small positions`;
+  }
+
+  return activeTab === "fiat"
     ? `${formatNumber(entry.displayValue, 8)} ${entry.name}`
     : formatCurrency(entry.displayValue, entry.quote === "EUR" ? "EUR" : "USD");
+};
 
 export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => {
   const [activeTab, setActiveTab] = useState<AllocationTab>("crypto");
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const allData = useMemo(
     () =>
       [...assets]
@@ -80,7 +101,7 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
         })),
     [assets],
   );
-  const data = useMemo(() => {
+  const { data, pieData, mainCount } = useMemo(() => {
     const filteredEntries = allData
       .filter((entry) => {
         const activeValue = activeTab === "fiat" ? entry.balance : entry.value;
@@ -90,7 +111,7 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
     const normalizedEntries =
       activeTab === "fiat"
         ? Array.from(
-            filteredEntries.reduce<Map<string, Omit<AllocationDatum, "displayValue" | "color">>>((totals, entry) => {
+            filteredEntries.reduce<Map<string, (typeof filteredEntries)[number]>>((totals, entry) => {
               const existingEntry = totals.get(entry.name);
 
               if (existingEntry) {
@@ -112,18 +133,70 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
       (total, entry) => total + (activeTab === "fiat" ? entry.balance : entry.value),
       0,
     );
-    const palette = buildAllocationPalette(sortedEntries.length);
+    const entriesWithShare = sortedEntries.map((entry) => {
+      const displayValue = activeTab === "fiat" ? entry.balance : entry.value;
 
-    return sortedEntries.map((entry, index) => ({
+      return {
+        ...entry,
+        key: `${entry.name}-${entry.quote ?? "na"}`,
+        displayValue,
+        pct: activeTotal > 0 ? (displayValue / activeTotal) * 100 : 0,
+      };
+    });
+
+    // Die Liste ist absteigend sortiert: Ab der ersten Position unter der
+    // Schwelle (oder ab der maximalen Stückzahl) ist alles Weitere Dust.
+    // Eine einzelne Kleinstposition lohnt keine Gruppe und bleibt eigenes Stück.
+    const firstDustIndex = entriesWithShare.findIndex(
+      (entry, index) => index >= MAX_PIE_SLICES || entry.pct < DUST_THRESHOLD_PCT,
+    );
+    const splitIndex =
+      firstDustIndex === -1 || entriesWithShare.length - firstDustIndex < 2
+        ? entriesWithShare.length
+        : firstDustIndex;
+    const palette = buildAllocationPalette(splitIndex);
+
+    const listEntries: AllocationDatum[] = entriesWithShare.map((entry, index) => ({
       ...entry,
-      displayValue: activeTab === "fiat" ? entry.balance : entry.value,
-      pct:
-        activeTotal > 0 ? ((activeTab === "fiat" ? entry.balance : entry.value) / activeTotal) * 100 : 0,
-      color: palette[index],
+      isDust: index >= splitIndex,
+      dustCount: 0,
+      color: index < splitIndex ? palette[index] : DUST_COLOR,
     }));
+    const dustEntries = listEntries.slice(splitIndex);
+    const sumDust = (pick: (entry: AllocationDatum) => number) =>
+      dustEntries.reduce((total, entry) => total + pick(entry), 0);
+    const dustSlice: AllocationDatum[] =
+      dustEntries.length > 0
+        ? [
+            {
+              key: DUST_KEY,
+              name: "Dust",
+              value: sumDust((entry) => entry.value),
+              balance: sumDust((entry) => entry.balance),
+              pct: sumDust((entry) => entry.pct),
+              quote: null,
+              isFiat: activeTab === "fiat",
+              isDust: true,
+              dustCount: dustEntries.length,
+              displayValue: sumDust((entry) => entry.displayValue),
+              color: DUST_COLOR,
+            },
+          ]
+        : [];
+
+    return {
+      data: listEntries,
+      pieData: [...listEntries.slice(0, splitIndex), ...dustSlice],
+      mainCount: splitIndex,
+    };
   }, [activeTab, allData]);
 
-  const hoveredEntry = hoveredIndex !== null ? data[hoveredIndex] ?? null : null;
+  const hoveredEntry =
+    hoveredKey !== null
+      ? data.find((entry) => entry.key === hoveredKey) ?? pieData.find((entry) => entry.key === hoveredKey) ?? null
+      : null;
+  // Eine Dust-Position aus der Liste hebt im Diagramm das Dust-Stück hervor.
+  const highlightedSliceKey = hoveredEntry ? (hoveredEntry.isDust ? DUST_KEY : hoveredEntry.key) : null;
   const topAsset = data[0]?.name ?? "n/a";
   const hasData = data.length > 0;
 
@@ -139,7 +212,7 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
               className={activeTab === "fiat" ? "button-primary px-3 py-1.5 text-xs" : "button-surface border-0 px-3 py-1.5 text-xs"}
               onClick={() => {
                 setActiveTab("fiat");
-                setHoveredIndex(null);
+                setHoveredKey(null);
               }}
             >
               Fiat
@@ -149,7 +222,7 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
               className={activeTab === "crypto" ? "button-primary px-3 py-1.5 text-xs" : "button-surface border-0 px-3 py-1.5 text-xs"}
               onClick={() => {
                 setActiveTab("crypto");
-                setHoveredIndex(null);
+                setHoveredKey(null);
               }}
             >
               Crypto
@@ -167,21 +240,22 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={data}
+                      data={pieData}
                       dataKey="displayValue"
                       nameKey="name"
                       innerRadius={72}
                       outerRadius={104}
-                      paddingAngle={2}
-                      onMouseMove={(_, index) => setHoveredIndex(index)}
-                      onMouseLeave={() => setHoveredIndex(null)}
+                      // Ein einzelnes Stück braucht keinen Abstand, sonst bleibt eine Lücke im Ring.
+                      paddingAngle={pieData.length > 1 ? PIE_PADDING_ANGLE : 0}
+                      onMouseMove={(_, index) => setHoveredKey(pieData[index]?.key ?? null)}
+                      onMouseLeave={() => setHoveredKey(null)}
                     >
-                      {data.map((entry, index) => (
+                      {pieData.map((entry) => (
                         <Cell
-                          key={`${entry.name}-${entry.quote ?? "na"}`}
+                          key={entry.key}
                           fill={entry.color}
-                          stroke={hoveredIndex === index ? "#ffffff" : "rgba(255,255,255,0.92)"}
-                          strokeWidth={hoveredIndex === index ? 3 : 1}
+                          stroke={highlightedSliceKey === entry.key ? "#ffffff" : "rgba(255,255,255,0.92)"}
+                          strokeWidth={highlightedSliceKey === entry.key ? 3 : 1}
                         />
                       ))}
                     </Pie>
@@ -212,21 +286,25 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
           {hasData ? (
             <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
               {data.map((entry, index) => (
-                <div
-                  key={`${entry.name}-${entry.quote ?? "na"}`}
-                  className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5 text-sm transition hover:border-slate-500/70 hover:bg-[#151c25]"
-                  onMouseEnter={() => setHoveredIndex(index)}
-                  onMouseLeave={() => setHoveredIndex(null)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: entry.color }}
-                    />
-                    <span>{entry.name}</span>
+                <Fragment key={entry.key}>
+                  {index === mainCount && index > 0 ? (
+                    <p className="terminal-label px-1 pt-2">Dust · grouped in chart</p>
+                  ) : null}
+                  <div
+                    className="flex items-center justify-between rounded-lg border border-border/70 bg-panelSoft/65 px-3 py-2.5 text-sm transition hover:border-slate-500/70 hover:bg-[#151c25]"
+                    onMouseEnter={() => setHoveredKey(entry.key)}
+                    onMouseLeave={() => setHoveredKey(null)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: entry.color }}
+                      />
+                      <span className={entry.isDust ? "text-slate-400" : undefined}>{entry.name}</span>
+                    </div>
+                    <span className="tabular text-slate-300">{entry.pct.toFixed(2)}%</span>
                   </div>
-                  <span className="tabular text-slate-300">{entry.pct.toFixed(2)}%</span>
-                </div>
+                </Fragment>
               ))}
             </div>
           ) : (
