@@ -247,6 +247,10 @@ export const AllocationChart = ({ assets }: { assets: PortfolioAssetRow[] }) => 
                       outerRadius={104}
                       // Ein einzelnes Stück braucht keinen Abstand, sonst bleibt eine Lücke im Ring.
                       paddingAngle={pieData.length > 1 ? PIE_PADDING_ANGLE : 0}
+                      // Keine Einblend-Animation: Die Live-Kurse ändern die Werte laufend,
+                      // recharts startet die Animation dann jedes Mal neu und der Ring
+                      // wird nie fertig gezeichnet (bleibt leer oder als halber Bogen stehen).
+                      isAnimationActive={false}
                       onMouseMove={(_, index) => setHoveredKey(pieData[index]?.key ?? null)}
                       onMouseLeave={() => setHoveredKey(null)}
                     >
